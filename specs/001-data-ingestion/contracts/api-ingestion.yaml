@@ -1,0 +1,416 @@
+openapi: 3.1.0
+info:
+  title: Coach3 Ingestion & Workouts API
+  version: 1.0.0
+  description: REST API for external fitness device integrations, synchronization, and workout telemetry.
+servers:
+  - url: http://localhost:8000
+    description: Local self-hosted Coach3 instance
+
+paths:
+  /api/v1/integrations:
+    get:
+      summary: List linked provider integrations
+      operationId: listIntegrations
+      responses:
+        '200':
+          description: List of integrations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IntegrationAccountResponse'
+
+  /api/v1/integrations/{provider}/auth-url:
+    get:
+      summary: Generate OAuth authorization URL
+      operationId: getAuthUrl
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [polar, concept2]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  auth_url:
+                    type: string
+                    format: uri
+
+  /api/v1/integrations/{provider}/exchange-code:
+    post:
+      summary: Complete OAuth authorization code exchange
+      operationId: exchangeOAuthCode
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [polar, concept2]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationAccountResponse'
+
+  /api/v1/integrations/{provider}/sync:
+    post:
+      summary: Trigger on-demand sync for a provider
+      operationId: triggerSync
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [polar, concept2]
+      responses:
+        '202':
+          description: Sync job queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncAuditLogResponse'
+
+  /api/v1/integrations/sync-logs:
+    get:
+      summary: View synchronization history and audit logs
+      operationId: listSyncLogs
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SyncAuditLogResponse'
+
+  /api/v1/workouts:
+    get:
+      summary: Query normalized workout sessions
+      operationId: listWorkouts
+      parameters:
+        - name: discipline
+          in: query
+          schema:
+            type: string
+            enum: [outdoor_run, indoor_row, erg_bike]
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkoutSessionResponse'
+
+  /api/v1/workouts/{id}:
+    get:
+      summary: Get details for a single workout session
+      operationId: getWorkout
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutSessionDetailResponse'
+        '404':
+          description: Workout not found
+
+  /api/v1/workouts/{id}/telemetry:
+    get:
+      summary: Get high-resolution heart rate samples, GPS points, and splits
+      operationId: getWorkoutTelemetry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutTelemetryResponse'
+
+  /api/v1/profile/heart-rate:
+    get:
+      summary: Retrieve user heart rate profile and zone definitions
+      operationId: getHeartRateProfile
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeartRateProfileResponse'
+    put:
+      summary: Update user heart rate profile and zone thresholds
+      operationId: updateHeartRateProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HeartRateProfileRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeartRateProfileResponse'
+
+components:
+  schemas:
+    IntegrationAccountResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+          enum: [polar, concept2]
+        account_id:
+          type: string
+        last_sync_at:
+          type: string
+          format: date-time
+          nullable: true
+        is_active:
+          type: boolean
+
+    SyncAuditLogResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+        trigger_type:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum: [running, success, partial, failed]
+        items_imported:
+          type: integer
+        items_updated:
+          type: integer
+        error_message:
+          type: string
+          nullable: true
+
+    WorkoutSessionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+        discipline:
+          type: string
+          enum: [outdoor_run, indoor_row, erg_bike]
+        title:
+          type: string
+        start_time_utc:
+          type: string
+          format: date-time
+        total_duration_sec:
+          type: number
+        total_distance_m:
+          type: number
+        avg_heart_rate:
+          type: integer
+          nullable: true
+        zone2_duration_sec:
+          type: number
+        avg_pace_sec_per_km:
+          type: number
+          nullable: true
+        avg_power_watts:
+          type: number
+          nullable: true
+        status:
+          type: string
+
+    WorkoutSessionDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/WorkoutSessionResponse'
+        - type: object
+          properties:
+            active_duration_sec:
+              type: number
+            total_calories:
+              type: integer
+              nullable: true
+            max_heart_rate:
+              type: integer
+              nullable: true
+            zone1_duration_sec:
+              type: number
+            zone3_duration_sec:
+              type: number
+            zone4_duration_sec:
+              type: number
+            zone5_duration_sec:
+              type: number
+            elevation_gain_m:
+              type: number
+              nullable: true
+            total_strokes:
+              type: integer
+              nullable: true
+            avg_cadence_spm:
+              type: number
+              nullable: true
+            avg_split_sec_per_500m:
+              type: number
+              nullable: true
+            avg_drag_factor:
+              type: integer
+              nullable: true
+            user_notes:
+              type: string
+              nullable: true
+
+    WorkoutTelemetryResponse:
+      type: object
+      properties:
+        workout_id:
+          type: string
+          format: uuid
+        heart_rate_samples:
+          type: array
+          items:
+            type: object
+            properties:
+              elapsed_sec:
+                type: number
+              bpm:
+                type: integer
+        gps_route_points:
+          type: array
+          items:
+            type: object
+            properties:
+              elapsed_sec:
+                type: number
+              latitude:
+                type: number
+              longitude:
+                type: number
+              altitude_m:
+                type: number
+                nullable: true
+        splits:
+          type: array
+          items:
+            type: object
+            properties:
+              split_index:
+                type: integer
+              distance_m:
+                type: number
+              duration_sec:
+                type: number
+              avg_pace_sec_per_km:
+                type: number
+                nullable: true
+              avg_power_watts:
+                type: number
+                nullable: true
+
+    HeartRateProfileRequest:
+      type: object
+      required: [resting_hr, max_hr]
+      properties:
+        resting_hr:
+          type: integer
+        max_hr:
+          type: integer
+        zone1_min:
+          type: integer
+        zone1_max:
+          type: integer
+        zone2_min:
+          type: integer
+        zone2_max:
+          type: integer
+        zone3_min:
+          type: integer
+        zone3_max:
+          type: integer
+        zone4_min:
+          type: integer
+        zone4_max:
+          type: integer
+        zone5_min:
+          type: integer
+        zone5_max:
+          type: integer
+
+    HeartRateProfileResponse:
+      allOf:
+        - $ref: '#/components/schemas/HeartRateProfileRequest'
+        - type: object
+          properties:
+            id:
+              type: string
+              format: uuid

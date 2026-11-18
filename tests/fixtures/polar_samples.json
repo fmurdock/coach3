@@ -1,0 +1,41 @@
+{
+  "exercises": [
+    {
+      "id": 987654321,
+      "upload_time": "2026-11-17T08:00:00.000Z",
+      "device": "Polar Vantage V3",
+      "start_time": "2026-11-17T07:00:00.000Z",
+      "duration": "PT3600S",
+      "distance": 10000.0,
+      "sport": "RUNNING",
+      "detailed_sport_info": "RUNNING",
+      "heart_rate": {
+        "average": 130,
+        "maximum": 158
+      },
+      "calories": 650,
+      "ascent": 45.0,
+      "descent": 42.0
+    }
+  ],
+  "samples": {
+    "heart_rate": [
+      {"elapsed_sec": 0, "bpm": 110},
+      {"elapsed_sec": 10, "bpm": 118},
+      {"elapsed_sec": 20, "bpm": 122},
+      {"elapsed_sec": 30, "bpm": 125},
+      {"elapsed_sec": 40, "bpm": 128},
+      {"elapsed_sec": 50, "bpm": 130},
+      {"elapsed_sec": 60, "bpm": 132}
+    ],
+    "coordinates": [
+      {"elapsed_sec": 0, "latitude": 37.7749, "longitude": -122.4194, "altitude": 15.0},
+      {"elapsed_sec": 10, "latitude": 37.7751, "longitude": -122.4190, "altitude": 16.0},
+      {"elapsed_sec": 20, "latitude": 37.7754, "longitude": -122.4185, "altitude": 17.0},
+      {"elapsed_sec": 30, "latitude": 37.7758, "longitude": -122.4180, "altitude": 18.0},
+      {"elapsed_sec": 40, "latitude": 37.7762, "longitude": -122.4175, "altitude": 18.5},
+      {"elapsed_sec": 50, "latitude": 37.7766, "longitude": -122.4170, "altitude": 19.0},
+      {"elapsed_sec": 60, "latitude": 37.7770, "longitude": -122.4165, "altitude": 19.2}
+    ]
+  }
+}

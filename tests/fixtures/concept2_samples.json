@@ -1,0 +1,88 @@
+{
+  "rower_workout": {
+    "id": 11223344,
+    "user_id": 556677,
+    "date": "2026-11-17 09:30:00",
+    "timezone": "America/Los_Angeles",
+    "type": "rower",
+    "distance": 5000,
+    "time": 12000,
+    "stroke_rate": 24,
+    "stroke_count": 480,
+    "pace": 1200,
+    "watts": 202,
+    "calories": 310,
+    "heart_rate": {
+      "average": 142,
+      "max": 165
+    },
+    "drag_factor": 125,
+    "intervals": [
+      {
+        "index": 1,
+        "distance": 1000,
+        "time": 2400,
+        "pace": 1200,
+        "watts": 202,
+        "stroke_rate": 24,
+        "heart_rate": 135
+      },
+      {
+        "index": 2,
+        "distance": 1000,
+        "time": 2400,
+        "pace": 1200,
+        "watts": 202,
+        "stroke_rate": 24,
+        "heart_rate": 140
+      },
+      {
+        "index": 3,
+        "distance": 1000,
+        "time": 2400,
+        "pace": 1200,
+        "watts": 202,
+        "stroke_rate": 24,
+        "heart_rate": 143
+      },
+      {
+        "index": 4,
+        "distance": 1000,
+        "time": 2400,
+        "pace": 1200,
+        "watts": 202,
+        "stroke_rate": 24,
+        "heart_rate": 146
+      },
+      {
+        "index": 5,
+        "distance": 1000,
+        "time": 2400,
+        "pace": 1200,
+        "watts": 202,
+        "stroke_rate": 24,
+        "heart_rate": 148
+      }
+    ]
+  },
+  "bike_workout": {
+    "id": 99887766,
+    "user_id": 556677,
+    "date": "2026-11-17 11:00:00",
+    "timezone": "America/Los_Angeles",
+    "type": "bike",
+    "distance": 10000,
+    "time": 10500,
+    "stroke_rate": 85,
+    "stroke_count": 1480,
+    "pace": 1050,
+    "watts": 225,
+    "calories": 420,
+    "heart_rate": {
+      "average": 138,
+      "max": 155
+    },
+    "drag_factor": 105,
+    "intervals": []
+  }
+}

@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: coach3-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-coach}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-coach_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-coach3_dev}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-coach} -d ${POSTGRES_DB:-coach3_dev}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: coach3-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-coach}:${POSTGRES_PASSWORD:-coach_secret}@db:5432/${POSTGRES_DB:-coach3_dev}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      POLAR_CLIENT_ID: ${POLAR_CLIENT_ID:-}
+      POLAR_CLIENT_SECRET: ${POLAR_CLIENT_SECRET:-}
+      CONCEPT2_CLIENT_ID: ${CONCEPT2_CLIENT_ID:-}
+      CONCEPT2_CLIENT_SECRET: ${CONCEPT2_CLIENT_SECRET:-}
+    ports:
+      - "${PORT:-8000}:8000"
+
+volumes:
+  pgdata:
