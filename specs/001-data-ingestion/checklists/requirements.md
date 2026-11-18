@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-11-17
-**Feature**: [spec.md](file:///Users/frankmurdock/coach3/specs/001-data-ingestion/spec.md)
+**Feature**: [spec.md](../spec.md)
 
 ## Content Quality
 

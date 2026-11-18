@@ -120,5 +120,5 @@ Run the full test suite (contract tests, unit tests, and integration tests with 
 pytest tests/ -v
 ```
 
-Reference schemas: [data-model.md](file:///Users/frankmurdock/coach3/specs/001-data-ingestion/data-model.md)  
-Reference API endpoints: [api-ingestion.yaml](file:///Users/frankmurdock/coach3/specs/001-data-ingestion/contracts/api-ingestion.yaml)
+Reference schemas: [data-model.md](data-model.md)  
+Reference API endpoints: [api-ingestion.yaml](contracts/api-ingestion.yaml)

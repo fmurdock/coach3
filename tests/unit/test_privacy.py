@@ -57,7 +57,7 @@ def test_scrub_workout_context_strips_pii_and_gps():
 
 
 def test_scrub_coaching_context():
-    athlete_ctx = {"name": "Frank", "email": "frank@coach.local", "age": 35}
+    athlete_ctx = {"name": "Alex", "email": "athlete@coach.local", "age": 35}
     workouts = [
         {
             "user_id": "abc-123",

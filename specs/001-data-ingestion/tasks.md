@@ -1,7 +1,7 @@
 # Tasks: Core Data Ingestion & Telemetry Models
 
 **Input**: Design documents from `/specs/001-data-ingestion/`  
-**Prerequisites**: [plan.md](file:///Users/frankmurdock/coach3/specs/001-data-ingestion/plan.md), [spec.md](file:///Users/frankmurdock/coach3/specs/001-data-ingestion/spec.md), [data-model.md](file:///Users/frankmurdock/coach3/specs/001-data-ingestion/data-model.md), [contracts/api-ingestion.yaml](file:///Users/frankmurdock/coach3/specs/001-data-ingestion/contracts/api-ingestion.yaml), [quickstart.md](file:///Users/frankmurdock/coach3/specs/001-data-ingestion/quickstart.md)
+**Prerequisites**: [plan.md](plan.md), [spec.md](spec.md), [data-model.md](data-model.md), [contracts/api-ingestion.yaml](contracts/api-ingestion.yaml), [quickstart.md](quickstart.md)
 
 ## Format: `- [ ] [TaskID] [P?] [Story?] Description with file path`
 

@@ -11,6 +11,12 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.cert
+*.crt
+*credentials*.json
+*client_secret*.json
 
 # Python
 __pycache__/
@@ -40,6 +46,9 @@ wheels/
 .pytest_cache/
 .coverage
 htmlcov/
+.mypy_cache/
+.ruff_cache/
+*.log
 
 # Node.js / Frontend
 node_modules/

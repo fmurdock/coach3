@@ -1,6 +1,6 @@
 # Implementation Plan: Core Data Ingestion & Telemetry Models
 
-**Branch**: `001-data-ingestion` | **Date**: 2026-11-17 | **Spec**: [spec.md](file:///Users/frankmurdock/coach3/specs/001-data-ingestion/spec.md)
+**Branch**: `001-data-ingestion` | **Date**: 2026-11-17 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `specs/001-data-ingestion/spec.md`
 
