@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Coach3 — Adaptive AI Coach</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card: #131a29;
+      --card-border: #1f293d;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-hover: #0284c7;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --purple: #a855f7;
+      --badge-bg: #1e293b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      padding: 16px;
+      padding-bottom: 40px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .brand {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand span {
+      color: var(--accent);
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 10px;
+    }
+
+    .nav-btn {
+      background: var(--badge-bg);
+      border: 1px solid var(--card-border);
+      color: var(--text);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 999px;
+      transition: all 0.2s ease;
+    }
+
+    .nav-btn.active {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* Privacy Banner */
+    .privacy-banner {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: #6ee7b7;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    /* Section Tabs */
+    .tab-bar {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 6px;
+      margin-bottom: 16px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .tab-btn {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 999px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s ease;
+    }
+
+    .tab-btn.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #04101e;
+      font-weight: 700;
+    }
+
+    .tab-panel {
+      display: none;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .tab-panel.active {
+      display: flex;
+    }
+
+    /* Cards */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .card-title {
+      font-size: 15px;
+      font-weight: 700;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Form Inputs */
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    input, select, textarea {
+      background: #0b111e;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text);
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--accent);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 90px;
+    }
+
+    /* Buttons */
+    .btn {
+      background: var(--accent);
+      color: #04101e;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background 0.2s;
+    }
+
+    .btn:hover {
+      background: var(--accent-hover);
+      color: #fff;
+    }
+
+    .btn-secondary {
+      background: var(--badge-bg);
+      border: 1px solid var(--card-border);
+      color: var(--text);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(56, 189, 248, 0.1);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* Sliders */
+    .slider-container {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .slider-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .slider-val {
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    input[type=range] {
+      accent-color: var(--accent);
+      padding: 0;
+      height: 6px;
+      cursor: pointer;
+    }
+
+    /* Status Badges */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .status-healthy {
+      background: rgba(16, 185, 129, 0.2);
+      color: var(--success);
+      border: 1px solid var(--success);
+    }
+
+    .status-active {
+      background: rgba(56, 189, 248, 0.2);
+      color: var(--accent);
+      border: 1px solid var(--accent);
+    }
+
+    .status-unreachable, .status-error {
+      background: rgba(239, 68, 68, 0.2);
+      color: var(--danger);
+      border: 1px solid var(--danger);
+    }
+
+    /* Score Radial / Box */
+    .score-banner {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: rgba(56, 189, 248, 0.08);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 12px;
+      padding: 14px;
+    }
+
+    .score-circle {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      border: 4px solid var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      font-weight: 900;
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .score-text {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .score-text h4 {
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .score-text p {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* Calendar & Schedule Items */
+    .calendar-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .workout-card {
+      background: rgba(19, 26, 41, 0.8);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: border-color 0.2s;
+    }
+
+    .workout-card.completed {
+      opacity: 0.6;
+      border-color: var(--success);
+    }
+
+    .workout-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .workout-title {
+      font-size: 14px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .discipline-tag {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      background: var(--badge-bg);
+      border: 1px solid var(--card-border);
+    }
+
+    .discipline-run { color: #38bdf8; border-color: rgba(56, 189, 248, 0.4); }
+    .discipline-row { color: #f59e0b; border-color: rgba(245, 158, 11, 0.4); }
+    .discipline-bike { color: #10b981; border-color: rgba(16, 185, 129, 0.4); }
+    .discipline-strength { color: #a855f7; border-color: rgba(168, 85, 247, 0.4); }
+    .discipline-rest { color: #94a3b8; border-color: rgba(148, 163, 184, 0.4); }
+
+    .workout-meta {
+      display: flex;
+      gap: 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+      flex-wrap: wrap;
+    }
+
+    .workout-notes {
+      font-size: 12px;
+      color: #cbd5e1;
+      background: rgba(11, 17, 30, 0.6);
+      padding: 8px;
+      border-radius: 6px;
+      border-left: 3px solid var(--accent);
+    }
+
+    .markdown-body {
+      font-size: 13px;
+      line-height: 1.6;
+      color: #cbd5e1;
+    }
+
+    .markdown-body h1, .markdown-body h2, .markdown-body h3 {
+      color: var(--text);
+      margin-top: 10px;
+      margin-bottom: 6px;
+    }
+
+    .markdown-body ul {
+      margin-left: 20px;
+      margin-bottom: 8px;
+    }
+
+    .recommendations-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .recommendation-item {
+      background: rgba(11, 17, 30, 0.6);
+      border: 1px solid var(--card-border);
+      border-left: 3px solid var(--accent);
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      Coach<span>3</span> AI Coach
+    </div>
+    <div class="nav-links">
+      <a href="/gym" class="nav-btn">Gym Mode</a>
+      <a href="/dashboard" class="nav-btn">Dashboard</a>
+      <a href="/coach" class="nav-btn active">AI Coach</a>
+    </div>
+  </header>
+
+  <!-- Privacy Banner (Constitution I) -->
+  <div class="privacy-banner">
+    <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg>
+    <span><strong>Data Sovereignty Active:</strong> 100% PII and raw GPS route coordinate traces are scrubbed before cloud dispatch. Manual provider failover only.</span>
+  </div>
+
+  <!-- Tab Bar -->
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('critique')">Workout Critique</button>
+    <button class="tab-btn" onclick="switchTab('plan')">Training Plan</button>
+    <button class="tab-btn" onclick="switchTab('philosophy')">Philosophy & Context</button>
+    <button class="tab-btn" onclick="switchTab('providers')">LLM Engines</button>
+  </div>
+
+  <!-- TAB 1: Retrospective Workout Critique (Analysis Mode) -->
+  <div id="tab-critique" class="tab-panel active">
+    <div class="card">
+      <div class="card-title">
+        <span>Retrospective Workout Analysis</span>
+        <button class="btn" id="btn-analyze" onclick="runAnalysis()">
+          <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+          Analyze Latest Workout
+        </button>
+      </div>
+      <p style="font-size: 13px; color: var(--text-muted);">
+        Critiques intensity discipline (Zone 2 adherence), RPE thresholds, and fatigue vs your active philosophy.
+      </p>
+    </div>
+
+    <!-- Critique Results Card -->
+    <div id="critique-container" style="display: none; flex-direction: column; gap: 14px;">
+      <div class="score-banner">
+        <div class="score-circle" id="critique-score">--</div>
+        <div class="score-text">
+          <h4 id="critique-score-title">Philosophy Adherence</h4>
+          <p id="critique-provider-tag" style="font-size: 11px;">Provider: --</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Executive Coach Summary</div>
+        <div id="critique-summary" class="markdown-body"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Coaching Recommendations</div>
+        <div id="critique-recommendations" class="recommendations-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 2: Forward Schedule Generation (Planning Mode) -->
+  <div id="tab-plan" class="tab-panel">
+    <div class="card">
+      <div class="card-title">Generate Periodized Schedule</div>
+      <div class="form-group">
+        <label>Athlete Target Goal</label>
+        <input type="text" id="plan-goal" placeholder="e.g. Sub-1:45 Half Marathon Base Phase, Strength-Endurance Hybrid">
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <div class="form-group">
+          <label>Planning Horizon</label>
+          <select id="plan-horizon">
+            <option value="7">7 Days (1 Week Microcycle)</option>
+            <option value="14">14 Days (2 Week Microcycle)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Available Days / Week</label>
+          <select id="plan-days">
+            <option value="4" selected>4 Days / Week</option>
+            <option value="3">3 Days / Week</option>
+            <option value="5">5 Days / Week</option>
+            <option value="6">6 Days / Week</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn" onclick="generatePlan()">Generate Training Plan</button>
+    </div>
+
+    <!-- Active Schedule Card -->
+    <div id="active-plan-container" class="card" style="display: none;">
+      <div class="card-title">
+        <span id="plan-goal-title">Active Training Plan</span>
+        <span class="status-badge status-active">Active</span>
+      </div>
+      <div id="plan-summary" class="markdown-body" style="margin-bottom: 10px;"></div>
+      <div class="card-title" style="font-size: 14px; margin-bottom: 6px;">Daily Microcycle Schedule</div>
+      <div id="calendar-grid" class="calendar-grid"></div>
+    </div>
+  </div>
+
+  <!-- TAB 3: Philosophy Steering & Manual Context Ingestion -->
+  <div id="tab-philosophy" class="tab-panel">
+    <div class="card">
+      <div class="card-title">
+        <span>Active Training Philosophy</span>
+        <select id="philosophy-selector" onchange="onPhilosophySelect(this.value)" style="width: auto;">
+          <option value="">Loading philosophies...</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Philosophy Name</label>
+        <input type="text" id="phil-name">
+      </div>
+
+      <div class="slider-container">
+        <div class="slider-header">
+          <span>Target Zone 2 (Aerobic Base) Volume</span>
+          <span class="slider-val" id="val-zone2">80%</span>
+        </div>
+        <input type="range" id="slider-zone2" min="50" max="95" step="1" value="80" oninput="document.getElementById('val-zone2').textContent = this.value + '%'">
+      </div>
+
+      <div class="slider-container">
+        <div class="slider-header">
+          <span>Max Weekly Volume Ramp Limit</span>
+          <span class="slider-val" id="val-ramp">10%</span>
+        </div>
+        <input type="range" id="slider-ramp" min="5" max="25" step="1" value="10" oninput="document.getElementById('val-ramp').textContent = this.value + '%'">
+      </div>
+
+      <div class="slider-container">
+        <div class="slider-header">
+          <span>Max RPE Threshold</span>
+          <span class="slider-val" id="val-rpe">8.5</span>
+        </div>
+        <input type="range" id="slider-rpe" min="6.0" max="10.0" step="0.5" value="8.5" oninput="document.getElementById('val-rpe').textContent = this.value">
+      </div>
+
+      <div class="slider-container">
+        <div class="slider-header">
+          <span>Minimum Rest Days Per Week</span>
+          <span class="slider-val" id="val-rest">2</span>
+        </div>
+        <input type="range" id="slider-rest" min="1" max="4" step="1" value="2" oninput="document.getElementById('val-rest').textContent = this.value">
+      </div>
+
+      <!-- Manual Context Ingestion -->
+      <div class="form-group" style="margin-top: 6px;">
+        <label style="display: flex; justify-content: space-between;">
+          <span>Athlete Manual Constraints & Context Notes</span>
+          <span style="font-weight: 400; color: var(--accent);">Direct Prompt Injection</span>
+        </label>
+        <textarea id="phil-notes" placeholder="Enter custom coaching rules, book excerpts, injury history, or movement restrictions... e.g. Avoid conventional deadlifts due to lumbar strain; cap weekly long run at 90 min; emphasize high-cadence rowing."></textarea>
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <button class="btn" onclick="savePhilosophy()">Save Philosophy</button>
+        <button class="btn btn-secondary" onclick="activateSelectedPhilosophy()">Set as Active</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 4: Dual-Engine LLM Selection & Health Checks -->
+  <div id="tab-providers" class="tab-panel">
+    <!-- Google Gemini Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>Google Gemini API (Cloud Engine)</span>
+        <span id="gemini-status" class="status-badge">Not Checked</span>
+      </div>
+      <div class="form-group">
+        <label>API Key (Encrypted at Rest with Fernet)</label>
+        <input type="password" id="gemini-key" placeholder="Enter Gemini API Key (AIzaSy...)">
+      </div>
+      <div class="form-group">
+        <label>Model Name</label>
+        <input type="text" id="gemini-model" value="gemini-2.5-flash">
+      </div>
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-secondary" onclick="testProvider('gemini')">Test Connectivity</button>
+        <button class="btn" onclick="saveAndActivateProvider('gemini')">Save & Activate</button>
+      </div>
+    </div>
+
+    <!-- llama.cpp Homelab Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>Local llama.cpp Server (Homelab Engine)</span>
+        <span id="llama-status" class="status-badge">Not Checked</span>
+      </div>
+      <div class="form-group">
+        <label>Endpoint URL (OpenAI-compatible /v1/chat/completions)</label>
+        <input type="text" id="llama-url" value="http://localhost:8080/v1">
+      </div>
+      <div class="form-group">
+        <label>Model Name</label>
+        <input type="text" id="llama-model" value="qwen2.5-14b-instruct">
+      </div>
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-secondary" onclick="testProvider('llama_cpp')">Test Connectivity</button>
+        <button class="btn" onclick="saveAndActivateProvider('llama_cpp')">Save & Activate</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentPhilosophies = [];
+    let currentProviders = [];
+    let selectedPhilosophyId = null;
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+
+      event.target.classList.add('active');
+      document.getElementById('tab-' + tabId).classList.add('active');
+    }
+
+    async function loadInitialData() {
+      await Promise.all([
+        loadProviders(),
+        loadPhilosophies(),
+        loadActivePlan(),
+        loadRecentCritique()
+      ]);
+    }
+
+    async function loadProviders() {
+      try {
+        const res = await fetch('/api/v1/coaching/providers');
+        if (!res.ok) return;
+        currentProviders = await res.json();
+        
+        currentProviders.forEach(p => {
+          if (p.provider_type === 'gemini') {
+            document.getElementById('gemini-model').value = p.model_name;
+            const badge = document.getElementById('gemini-status');
+            if (p.is_active) {
+              badge.textContent = 'Active Engine';
+              badge.className = 'status-badge status-active';
+            }
+          } else if (p.provider_type === 'llama_cpp') {
+            document.getElementById('llama-url').value = p.endpoint_url;
+            document.getElementById('llama-model').value = p.model_name;
+            const badge = document.getElementById('llama-status');
+            if (p.is_active) {
+              badge.textContent = 'Active Engine';
+              badge.className = 'status-badge status-active';
+            }
+          }
+        });
+      } catch (err) {
+        console.error('Error loading providers:', err);
+      }
+    }
+
+    async function testProvider(type) {
+      const provider = currentProviders.find(p => p.provider_type === type);
+      const statusBadge = document.getElementById(type === 'gemini' ? 'gemini-status' : 'llama-status');
+      statusBadge.textContent = 'Testing...';
+      statusBadge.className = 'status-badge';
+
+      if (!provider) {
+        alert('Please save the provider configuration first.');
+        statusBadge.textContent = 'Unconfigured';
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/v1/coaching/providers/${provider.id}/test`, { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'healthy') {
+          statusBadge.textContent = `Healthy (${data.latency_ms}ms)`;
+          statusBadge.className = 'status-badge status-healthy';
+        } else {
+          statusBadge.textContent = `${data.status}`;
+          statusBadge.className = 'status-badge status-error';
+          alert(`Health Check: ${data.message}`);
+        }
+      } catch (e) {
+        statusBadge.textContent = 'Error';
+        statusBadge.className = 'status-badge status-error';
+        alert(`Test failed: ${e.message}`);
+      }
+    }
+
+    async function saveAndActivateProvider(type) {
+      let payload = { provider_type: type };
+      if (type === 'gemini') {
+        payload.endpoint_url = 'https://generativelanguage.googleapis.com';
+        payload.model_name = document.getElementById('gemini-model').value;
+        const key = document.getElementById('gemini-key').value;
+        if (key) payload.api_key = key;
+      } else {
+        payload.endpoint_url = document.getElementById('llama-url').value;
+        payload.model_name = document.getElementById('llama-model').value;
+      }
+
+      try {
+        const res = await fetch('/api/v1/coaching/providers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const saved = await res.json();
+        await fetch(`/api/v1/coaching/providers/${saved.id}/activate`, { method: 'POST' });
+        alert(`Activated ${type} successfully!`);
+        await loadProviders();
+      } catch (err) {
+        alert('Error saving provider: ' + err.message);
+      }
+    }
+
+    async function loadPhilosophies() {
+      try {
+        const res = await fetch('/api/v1/coaching/philosophies');
+        if (!res.ok) return;
+        currentPhilosophies = await res.json();
+
+        const selector = document.getElementById('philosophy-selector');
+        selector.innerHTML = '';
+        currentPhilosophies.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = p.name + (p.is_active ? ' (Active)' : '');
+          if (p.is_active) opt.selected = true;
+          selector.appendChild(opt);
+        });
+
+        const active = currentPhilosophies.find(p => p.is_active) || currentPhilosophies[0];
+        if (active) populatePhilosophy(active);
+      } catch (e) {
+        console.error('Error loading philosophies:', e);
+      }
+    }
+
+    function onPhilosophySelect(philId) {
+      const p = currentPhilosophies.find(x => x.id === philId);
+      if (p) populatePhilosophy(p);
+    }
+
+    function populatePhilosophy(p) {
+      selectedPhilosophyId = p.id;
+      document.getElementById('phil-name').value = p.name;
+      document.getElementById('slider-zone2').value = p.target_zone2_pct;
+      document.getElementById('val-zone2').textContent = p.target_zone2_pct + '%';
+      document.getElementById('slider-ramp').value = p.max_weekly_volume_ramp_pct;
+      document.getElementById('val-ramp').textContent = p.max_weekly_volume_ramp_pct + '%';
+      document.getElementById('slider-rpe').value = p.max_rpe_threshold;
+      document.getElementById('val-rpe').textContent = p.max_rpe_threshold;
+      document.getElementById('slider-rest').value = p.min_rest_days_per_week;
+      document.getElementById('val-rest').textContent = p.min_rest_days_per_week;
+      document.getElementById('phil-notes').value = p.custom_context_notes || '';
+    }
+
+    async function savePhilosophy() {
+      const payload = {
+        name: document.getElementById('phil-name').value,
+        target_zone2_pct: parseFloat(document.getElementById('slider-zone2').value),
+        max_weekly_volume_ramp_pct: parseFloat(document.getElementById('slider-ramp').value),
+        max_rpe_threshold: parseFloat(document.getElementById('slider-rpe').value),
+        min_rest_days_per_week: parseInt(document.getElementById('slider-rest').value),
+        custom_context_notes: document.getElementById('phil-notes').value
+      };
+
+      try {
+        const res = await fetch('/api/v1/coaching/philosophies', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          alert('Philosophy saved!');
+          await loadPhilosophies();
+        }
+      } catch (e) {
+        alert('Failed saving philosophy: ' + e.message);
+      }
+    }
+
+    async function activateSelectedPhilosophy() {
+      if (!selectedPhilosophyId) return;
+      try {
+        const res = await fetch(`/api/v1/coaching/philosophies/${selectedPhilosophyId}/activate`, { method: 'POST' });
+        if (res.ok) {
+          alert('Philosophy activated!');
+          await loadPhilosophies();
+        }
+      } catch (e) {
+        alert('Failed activating philosophy: ' + e.message);
+      }
+    }
+
+    async function runAnalysis() {
+      const btn = document.getElementById('btn-analyze');
+      btn.disabled = true;
+      btn.textContent = 'Analyzing...';
+
+      try {
+        const res = await fetch('/api/v1/coaching/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          alert('Analysis error: ' + (err.detail || res.statusText));
+          return;
+        }
+        const critique = await res.json();
+        renderCritique(critique);
+      } catch (e) {
+        alert('Analysis request failed: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg> Analyze Latest Workout`;
+      }
+    }
+
+    async function loadRecentCritique() {
+      try {
+        const res = await fetch('/api/v1/coaching/critiques/recent?limit=1');
+        if (!res.ok) return;
+        const list = await res.json();
+        if (list.length > 0) {
+          renderCritique(list[0]);
+        }
+      } catch (e) {
+        console.error('Error loading recent critique:', e);
+      }
+    }
+
+    function renderCritique(c) {
+      document.getElementById('critique-container').style.display = 'flex';
+      document.getElementById('critique-score').textContent = Math.round(c.adherence_score);
+      document.getElementById('critique-provider-tag').textContent = `Provider: ${c.provider_used} • ${new Date(c.created_at).toLocaleDateString()}`;
+      document.getElementById('critique-summary').innerHTML = formatMarkdown(c.summary_markdown);
+
+      const recsContainer = document.getElementById('critique-recommendations');
+      recsContainer.innerHTML = '';
+      (c.recommendations || []).forEach(r => {
+        const item = document.createElement('div');
+        item.className = 'recommendation-item';
+        item.textContent = r;
+        recsContainer.appendChild(item);
+      });
+    }
+
+    async function generatePlan() {
+      const goal = document.getElementById('plan-goal').value;
+      if (!goal) {
+        alert('Please specify an athlete goal');
+        return;
+      }
+      const horizon = parseInt(document.getElementById('plan-horizon').value);
+      const days = parseInt(document.getElementById('plan-days').value);
+
+      try {
+        const res = await fetch('/api/v1/coaching/plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            target_goal: goal,
+            horizon_days: horizon,
+            available_days_per_week: days
+          })
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          alert('Planning error: ' + (err.detail || res.statusText));
+          return;
+        }
+        const plan = await res.json();
+        renderPlan(plan);
+      } catch (e) {
+        alert('Planning failed: ' + e.message);
+      }
+    }
+
+    async function loadActivePlan() {
+      try {
+        const res = await fetch('/api/v1/coaching/plans/active');
+        if (!res.ok) return;
+        const plan = await res.json();
+        renderPlan(plan);
+      } catch (e) {
+        console.log('No active plan found.');
+      }
+    }
+
+    function renderPlan(p) {
+      document.getElementById('active-plan-container').style.display = 'flex';
+      document.getElementById('plan-goal-title').textContent = p.target_goal;
+      document.getElementById('plan-summary').innerHTML = formatMarkdown(p.summary_markdown);
+
+      const grid = document.getElementById('calendar-grid');
+      grid.innerHTML = '';
+
+      (p.scheduled_workouts || []).forEach(w => {
+        const card = document.createElement('div');
+        card.className = `workout-card ${w.is_completed ? 'completed' : ''}`;
+
+        const discClass = `discipline-${w.discipline.replace('outdoor_', '').replace('indoor_', '').replace('erg_', '')}`;
+
+        let details = [];
+        if (w.planned_duration_min > 0) details.push(`${w.planned_duration_min} min`);
+        if (w.target_distance_m) details.push(`${(w.target_distance_m / 1000).toFixed(1)} km`);
+        if (w.target_zone) details.push(w.target_zone);
+        if (w.target_rpe) details.push(`RPE ${w.target_rpe}`);
+
+        let strengthHtml = '';
+        if (w.strength_exercises && w.strength_exercises.length > 0) {
+          const exNames = w.strength_exercises.map(e => e.name || e.exercise_name).join(', ');
+          strengthHtml = `<div style="font-size: 11px; color: var(--purple);">Exercises: ${exNames}</div>`;
+        }
+
+        card.innerHTML = `
+          <div class="workout-header">
+            <div class="workout-title">
+              <span class="discipline-tag ${discClass}">${w.discipline}</span>
+              <span>${w.title}</span>
+            </div>
+            <span style="font-size: 12px; color: var(--text-muted); font-weight: 600;">${w.target_date}</span>
+          </div>
+          <div class="workout-meta">
+            ${details.map(d => `<span>• ${d}</span>`).join(' ')}
+          </div>
+          ${strengthHtml}
+          ${w.notes ? `<div class="workout-notes">${w.notes}</div>` : ''}
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    function formatMarkdown(text) {
+      if (!text) return '';
+      return text
+        .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+        .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+        .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+        .replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>')
+        .replace(/\*(.*)\*/gim, '<em>$1</em>')
+        .replace(/^\s*\n\*/gm, '<ul>\n*')
+        .replace(/^(\*|\-) (.*$)/gim, '<li>$2</li>')
+        .replace(/\n$/gim, '<br />')
+        .replace(/\n\n/g, '<br /><br />');
+    }
+
+    window.addEventListener('DOMContentLoaded', loadInitialData);
+  </script>
+</body>
+</html>

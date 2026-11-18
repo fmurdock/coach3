@@ -1,0 +1,439 @@
+openapi: 3.1.0
+info:
+  title: Coach3 Adaptive AI Coaching API
+  description: Endpoints for dual-engine LLM management, philosophy steering, retrospective workout analysis, and forward schedule planning.
+  version: 1.0.0
+
+paths:
+  /api/v1/coaching/providers:
+    get:
+      summary: List configured LLM inference providers
+      operationId: listProviders
+      responses:
+        '200':
+          description: List of providers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LLMProviderResponse'
+    post:
+      summary: Create or update an LLM provider configuration
+      operationId: saveProvider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveProviderRequest'
+      responses:
+        '200':
+          description: Saved provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMProviderResponse'
+
+  /api/v1/coaching/providers/{provider_id}/activate:
+    post:
+      summary: Set active inference provider
+      operationId: activateProvider
+      parameters:
+        - name: provider_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Active provider updated
+
+  /api/v1/coaching/providers/{provider_id}/test:
+    post:
+      summary: Test connectivity and health of an inference provider
+      operationId: testProviderHealth
+      parameters:
+        - name: provider_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Health test result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderHealthResponse'
+
+  /api/v1/coaching/philosophies:
+    get:
+      summary: List coaching philosophies
+      operationId: listPhilosophies
+      responses:
+        '200':
+          description: List of philosophies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CoachingPhilosophyResponse'
+    post:
+      summary: Create or update a coaching philosophy
+      operationId: savePhilosophy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavePhilosophyRequest'
+      responses:
+        '200':
+          description: Saved philosophy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoachingPhilosophyResponse'
+
+  /api/v1/coaching/philosophies/{philosophy_id}/activate:
+    post:
+      summary: Set active coaching philosophy
+      operationId: activatePhilosophy
+      parameters:
+        - name: philosophy_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Active philosophy updated
+
+  /api/v1/coaching/analyze:
+    post:
+      summary: Run retrospective workout analysis (Analysis Mode)
+      operationId: analyzeWorkout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalyzeWorkoutRequest'
+      responses:
+        '200':
+          description: Generated coaching critique
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoachingCritiqueResponse'
+
+  /api/v1/coaching/plan:
+    post:
+      summary: Generate periodized forward schedule plan (Planning Mode)
+      operationId: generateForwardPlan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GeneratePlanRequest'
+      responses:
+        '200':
+          description: Generated schedule plan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrainingSchedulePlanResponse'
+
+  /api/v1/coaching/plans/active:
+    get:
+      summary: Retrieve currently active forward schedule plan and workouts
+      operationId: getActivePlan
+      responses:
+        '200':
+          description: Active plan with workouts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrainingSchedulePlanResponse'
+
+components:
+  schemas:
+    SaveProviderRequest:
+      type: object
+      required:
+        - provider_type
+        - endpoint_url
+        - model_name
+      properties:
+        provider_type:
+          type: string
+          enum: [gemini, llama_cpp]
+        endpoint_url:
+          type: string
+        api_key:
+          type: string
+          nullable: true
+        model_name:
+          type: string
+        temperature:
+          type: number
+          default: 0.7
+        max_tokens:
+          type: integer
+          default: 2048
+
+    LLMProviderResponse:
+      type: object
+      required:
+        - id
+        - provider_type
+        - endpoint_url
+        - model_name
+        - is_active
+        - has_api_key
+      properties:
+        id:
+          type: string
+          format: uuid
+        provider_type:
+          type: string
+        endpoint_url:
+          type: string
+        model_name:
+          type: string
+        temperature:
+          type: number
+        max_tokens:
+          type: integer
+        is_active:
+          type: boolean
+        has_api_key:
+          type: boolean
+
+    ProviderHealthResponse:
+      type: object
+      required:
+        - status
+        - latency_ms
+        - message
+      properties:
+        status:
+          type: string
+          enum: [healthy, unreachable, invalid_credentials, error]
+        latency_ms:
+          type: number
+        message:
+          type: string
+
+    SavePhilosophyRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        target_zone2_pct:
+          type: number
+          default: 80.0
+        max_weekly_volume_ramp_pct:
+          type: number
+          default: 10.0
+        max_rpe_threshold:
+          type: number
+          default: 8.5
+        min_rest_days_per_week:
+          type: integer
+          default: 2
+        primary_modality:
+          type: string
+          default: hybrid
+        custom_context_notes:
+          type: string
+          nullable: true
+
+    CoachingPhilosophyResponse:
+      type: object
+      required:
+        - id
+        - name
+        - target_zone2_pct
+        - max_weekly_volume_ramp_pct
+        - max_rpe_threshold
+        - min_rest_days_per_week
+        - is_active
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        target_zone2_pct:
+          type: number
+        max_weekly_volume_ramp_pct:
+          type: number
+        max_rpe_threshold:
+          type: number
+        min_rest_days_per_week:
+          type: integer
+        primary_modality:
+          type: string
+        custom_context_notes:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+
+    AnalyzeWorkoutRequest:
+      type: object
+      properties:
+        workout_session_id:
+          type: string
+          format: uuid
+          nullable: true
+        start_date:
+          type: string
+          format: date
+          nullable: true
+        end_date:
+          type: string
+          format: date
+          nullable: true
+        philosophy_id:
+          type: string
+          format: uuid
+          nullable: true
+
+    CoachingCritiqueResponse:
+      type: object
+      required:
+        - id
+        - provider_used
+        - adherence_score
+        - summary_markdown
+        - recommendations
+      properties:
+        id:
+          type: string
+          format: uuid
+        provider_used:
+          type: string
+        adherence_score:
+          type: number
+        summary_markdown:
+          type: string
+        adherence_details:
+          type: object
+        strain_assessment:
+          type: object
+        recommendations:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    GeneratePlanRequest:
+      type: object
+      required:
+        - target_goal
+      properties:
+        target_goal:
+          type: string
+          example: "10k Race Preparation"
+        horizon_days:
+          type: integer
+          enum: [7, 14]
+          default: 7
+        available_days_per_week:
+          type: integer
+          default: 4
+        philosophy_id:
+          type: string
+          format: uuid
+          nullable: true
+
+    ScheduledWorkoutItem:
+      type: object
+      required:
+        - id
+        - target_date
+        - discipline
+        - title
+        - planned_duration_min
+        - is_completed
+      properties:
+        id:
+          type: string
+          format: uuid
+        target_date:
+          type: string
+          format: date
+        discipline:
+          type: string
+        title:
+          type: string
+        planned_duration_min:
+          type: integer
+        target_distance_m:
+          type: number
+          nullable: true
+        target_zone:
+          type: string
+          nullable: true
+        target_rpe:
+          type: number
+          nullable: true
+        strength_exercises:
+          type: array
+          items:
+            type: object
+        notes:
+          type: string
+          nullable: true
+        is_completed:
+          type: boolean
+
+    TrainingSchedulePlanResponse:
+      type: object
+      required:
+        - id
+        - target_goal
+        - start_date
+        - end_date
+        - horizon_days
+        - summary_markdown
+        - status
+        - scheduled_workouts
+      properties:
+        id:
+          type: string
+          format: uuid
+        target_goal:
+          type: string
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        horizon_days:
+          type: integer
+        summary_markdown:
+          type: string
+        status:
+          type: string
+        scheduled_workouts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScheduledWorkoutItem'

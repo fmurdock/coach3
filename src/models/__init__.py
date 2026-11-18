@@ -1,6 +1,13 @@
 """Centralized models package exports."""
 
 from src.models.base import Base
+from src.models.coaching import (
+    CoachingCritique,
+    CoachingPhilosophy,
+    LLMProviderConfig,
+    ScheduledWorkout,
+    TrainingSchedulePlan,
+)
 from src.models.exercise import ExerciseAlias, StrengthExercise
 from src.models.integration import IntegrationAccount, SyncAuditLog
 from src.models.personal_record import PersonalRecord
@@ -25,4 +32,9 @@ __all__ = [
     "StrengthSet",
     "PersonalRecord",
     "VoiceTranscriptionLog",
+    "LLMProviderConfig",
+    "CoachingPhilosophy",
+    "CoachingCritique",
+    "TrainingSchedulePlan",
+    "ScheduledWorkout",
 ]

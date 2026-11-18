@@ -56,6 +56,12 @@ async def gym_ui():
     return FileResponse(STATIC_DIR / "gym.html")
 
 
+@app.get("/coach", tags=["AI Coach"], response_class=FileResponse)
+async def coach_ui():
+    """Serves the interactive adaptive AI coaching interface."""
+    return FileResponse(STATIC_DIR / "coach.html")
+
+
 @app.get("/", tags=["Root"], response_class=FileResponse)
 async def root_ui():
     """Default landing interface."""
