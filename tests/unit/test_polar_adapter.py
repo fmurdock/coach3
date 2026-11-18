@@ -43,3 +43,55 @@ def test_normalize_polar_exercise_from_fixture():
     assert normalized.gps_route_points[0].latitude == 37.7749
     assert normalized.gps_route_points[0].longitude == -122.4194
     assert normalized.gps_route_points[0].altitude_m == 15.0
+
+
+import httpx
+import pytest
+
+@pytest.mark.asyncio
+async def test_polar_fetch_workouts_batch_204_no_content():
+    def mock_handler(request: httpx.Request):
+        return httpx.Response(204)
+
+    adapter = PolarAdapter()
+    transport = httpx.MockTransport(mock_handler)
+    # Patch httpx.AsyncClient with mock transport
+    import unittest.mock as mock
+    with mock.patch("httpx.AsyncClient", return_value=httpx.AsyncClient(transport=transport)):
+        result = await adapter.fetch_workouts_batch("fake_token")
+        assert len(result.workouts) == 0
+        assert result.has_more is False
+
+
+@pytest.mark.asyncio
+async def test_polar_fetch_workouts_batch_full_flow():
+    fixture_path = Path(__file__).parent.parent / "fixtures" / "polar_samples.json"
+    with open(fixture_path) as f:
+        sample_data = json.load(f)
+
+    def mock_handler(request: httpx.Request):
+        url = str(request.url)
+        if url.endswith("/exercise-transactions") and request.method == "POST":
+            return httpx.Response(201, json={"transaction-id": 12345})
+        elif url.endswith("/exercise-transactions/12345") and request.method == "GET":
+            return httpx.Response(200, json={"exercises": ["https://polarremote.com/v2/users/exercise-transactions/12345/exercises/987654321"]})
+        elif url.endswith("/exercises/987654321") and request.method == "GET":
+            return httpx.Response(200, json=sample_data["exercises"][0])
+        elif url.endswith("/exercises/987654321/samples") and request.method == "GET":
+            return httpx.Response(200, json=sample_data["samples"])
+        elif url.endswith("/exercise-transactions/12345") and request.method == "PUT":
+            return httpx.Response(200)
+        return httpx.Response(404)
+
+    adapter = PolarAdapter()
+    transport = httpx.MockTransport(mock_handler)
+    import unittest.mock as mock
+    with mock.patch("httpx.AsyncClient", return_value=httpx.AsyncClient(transport=transport)):
+        result = await adapter.fetch_workouts_batch("fake_token")
+        assert len(result.workouts) == 1
+        w = result.workouts[0]
+        assert w.external_id == "987654321"
+        assert w.total_distance_m == 10000.0
+        assert len(w.heart_rate_samples) == 7
+        assert len(w.gps_route_points) == 7
+

@@ -171,4 +171,39 @@ class Concept2Adapter(BaseIngestionAdapter):
         cursor: dict[str, Any] | None = None,
         since: datetime | None = None,
     ) -> SyncBatchResult:
-        return SyncBatchResult(workouts=[], next_cursor=None, has_more=False)
+        """Fetch workouts from Concept2 Logbook API with pagination support."""
+        page = cursor.get("page", 1) if cursor else 1
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        }
+        params: dict[str, Any] = {"page": page}
+        if since:
+            params["from"] = since.strftime("%Y-%m-%d")
+
+        url = f"{self.BASE_URL}/users/me/results"
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                resp = await client.get(url, headers=headers, params=params)
+                if resp.status_code == 404:
+                    return SyncBatchResult(workouts=[], next_cursor=None, has_more=False)
+                resp.raise_for_status()
+                payload = resp.json()
+            except httpx.HTTPError:
+                return SyncBatchResult(workouts=[], next_cursor=cursor, has_more=False)
+
+            results_data = payload.get("data", [])
+            normalized_workouts: list[NormalizedWorkout] = []
+            for item in results_data:
+                normalized_workouts.append(self.normalize_concept2_workout(item))
+
+            pagination = payload.get("pagination", {})
+            has_next = bool(pagination.get("next"))
+            next_cursor = {"page": page + 1} if has_next else None
+
+            return SyncBatchResult(
+                workouts=normalized_workouts,
+                next_cursor=next_cursor,
+                has_more=has_next,
+            )

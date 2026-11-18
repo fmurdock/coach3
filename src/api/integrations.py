@@ -74,6 +74,12 @@ async def exchange_oauth_code(
     refresh_token = token_data.get("refresh_token")
     account_id = str(token_data.get("x_user_id") or token_data.get("user_id") or uuid.uuid4())
 
+    if provider == "polar":
+        try:
+            await adapter.register_user(access_token, account_id)
+        except Exception:
+            pass  # If user is already registered or registration fails, continue with token persistence
+
     q = select(IntegrationAccount).where(
         IntegrationAccount.user_id == user.id,
         IntegrationAccount.provider == provider,

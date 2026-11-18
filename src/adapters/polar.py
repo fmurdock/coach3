@@ -192,17 +192,96 @@ class PolarAdapter(BaseIngestionAdapter):
             gps_route_points=gps_points,
         )
 
+    async def register_user(self, access_token: str, member_id: str) -> dict[str, Any] | None:
+        """Register a user with Polar AccessLink API (required once after OAuth authorization)."""
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                f"{self.BASE_URL}/users",
+                headers=headers,
+                json={"member-id": member_id},
+            )
+            # 200 = registered, 409 = already registered
+            if resp.status_code in (200, 409):
+                return resp.json() if resp.status_code == 200 else None
+            resp.raise_for_status()
+            return resp.json()
+
     async def fetch_workouts_batch(
         self,
         access_token: str,
         cursor: dict[str, Any] | None = None,
         since: datetime | None = None,
     ) -> SyncBatchResult:
-        # In production this calls Polar AccessLink API endpoints;
-        # For offline / decoupled operation it handles transaction creation or pulls exercises
+        """Pull new workouts and telemetry from Polar AccessLink using the Transaction API."""
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json",
         }
-        # Standard implementation
-        return SyncBatchResult(workouts=[], next_cursor=None, has_more=False)
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Step 1: Create an exercise transaction to retrieve new exercises
+            # Polar AccessLink transaction endpoint: POST /v2/users/{user_id}/exercise-transactions
+            # When user_id is unknown or single-user token, Polar also supports pull via /v2/users/exercise-transactions
+            # or direct query.
+            user_id = cursor.get("user_id") if cursor else None
+            tx_url = f"{self.BASE_URL}/users/{user_id}/exercise-transactions" if user_id else f"{self.BASE_URL}/users/exercise-transactions"
+
+            try:
+                tx_resp = await client.post(tx_url, headers=headers)
+            except httpx.HTTPError:
+                return SyncBatchResult(workouts=[], next_cursor=cursor, has_more=False)
+
+            if tx_resp.status_code == 204:
+                # 204 No Content: No new exercises available
+                return SyncBatchResult(workouts=[], next_cursor=cursor, has_more=False)
+
+            if tx_resp.status_code == 404 and not user_id:
+                # Fallback if user_id is required: check userinfo or return empty
+                return SyncBatchResult(workouts=[], next_cursor=cursor, has_more=False)
+
+            tx_resp.raise_for_status()
+            tx_data = tx_resp.json()
+            transaction_id = tx_data.get("transaction-id")
+            if not transaction_id:
+                return SyncBatchResult(workouts=[], next_cursor=cursor, has_more=False)
+
+            # Step 2: List exercises in the transaction
+            exercises_resp = await client.get(
+                f"{tx_url}/{transaction_id}",
+                headers=headers,
+            )
+            exercises_resp.raise_for_status()
+            exercise_urls: list[str] = exercises_resp.json().get("exercises", [])
+
+            normalized_workouts: list[NormalizedWorkout] = []
+
+            # Step 3: Fetch each exercise summary and its samples (HR & GPS)
+            for ex_url in exercise_urls:
+                ex_resp = await client.get(ex_url, headers=headers)
+                if ex_resp.status_code != 200:
+                    continue
+                ex_data = ex_resp.json()
+
+                # Fetch detailed samples (coordinates and heart rate)
+                samples_data = None
+                samples_url = f"{ex_url}/samples"
+                samples_resp = await client.get(samples_url, headers=headers)
+                if samples_resp.status_code == 200:
+                    samples_data = samples_resp.json()
+
+                workout = self.normalize_polar_exercise(ex_data, samples_data)
+                normalized_workouts.append(workout)
+
+            # Step 4: Commit transaction to mark exercises as processed
+            await client.put(f"{tx_url}/{transaction_id}", headers=headers)
+
+            return SyncBatchResult(
+                workouts=normalized_workouts,
+                next_cursor=cursor,
+                has_more=False,
+            )

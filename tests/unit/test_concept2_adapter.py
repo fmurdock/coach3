@@ -55,3 +55,30 @@ def test_normalize_concept2_bike_workout():
     assert normalized.avg_power_watts == 225.0
     assert normalized.avg_drag_factor == 105
     assert len(normalized.splits) == 0
+
+
+import httpx
+import pytest
+
+@pytest.mark.asyncio
+async def test_concept2_fetch_workouts_batch():
+    fixture_path = Path(__file__).parent.parent / "fixtures" / "concept2_samples.json"
+    with open(fixture_path) as f:
+        sample_data = json.load(f)
+
+    def mock_handler(request: httpx.Request):
+        return httpx.Response(200, json={
+            "data": [sample_data["rower_workout"], sample_data["bike_workout"]],
+            "pagination": {"next": None, "page": 1}
+        })
+
+    adapter = Concept2Adapter()
+    transport = httpx.MockTransport(mock_handler)
+    import unittest.mock as mock
+    with mock.patch("httpx.AsyncClient", return_value=httpx.AsyncClient(transport=transport)):
+        result = await adapter.fetch_workouts_batch("fake_token")
+        assert len(result.workouts) == 2
+        assert result.workouts[0].discipline == "indoor_row"
+        assert result.workouts[1].discipline == "erg_bike"
+        assert result.has_more is False
+
