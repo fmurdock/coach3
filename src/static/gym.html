@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Coach3 — Gym Mode Voice Logger</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card: #131a29;
+      --card-border: #1f293d;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-hover: #0284c7;
+      --success: #10b981;
+      --success-hover: #059669;
+      --danger: #ef4444;
+      --badge-bg: #1e293b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      padding: 16px;
+      padding-bottom: 40px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .brand {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand span {
+      color: var(--accent);
+    }
+
+    .session-badge {
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: var(--accent);
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+    }
+
+    /* Voice / Input Section */
+    .mic-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      margin: 20px 0;
+    }
+
+    .mic-btn {
+      width: 90px;
+      height: 90px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #0284c7, #38bdf8);
+      border: none;
+      color: white;
+      font-size: 36px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 10px 25px rgba(2, 132, 199, 0.4);
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+
+    .mic-btn:active {
+      transform: scale(0.92);
+    }
+
+    .mic-btn.listening {
+      background: linear-gradient(135deg, #dc2626, #ef4444);
+      animation: pulse 1.4s infinite;
+      box-shadow: 0 10px 25px rgba(239, 68, 68, 0.5);
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+      100% { transform: scale(1); }
+    }
+
+    .mic-label {
+      margin-top: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    /* Text Fallback Box */
+    .text-input-wrap {
+      display: flex;
+      gap: 8px;
+      margin-top: 14px;
+      width: 100%;
+      max-width: 500px;
+    }
+
+    .text-input-wrap input {
+      flex: 1;
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      color: var(--text);
+      padding: 12px 14px;
+      border-radius: 12px;
+      font-size: 15px;
+      outline: none;
+    }
+
+    .text-input-wrap button {
+      background: var(--accent);
+      color: #04101e;
+      font-weight: 700;
+      border: none;
+      padding: 0 18px;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+
+    /* Staged Review Card */
+    .staged-section {
+      display: none;
+      margin: 20px 0;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--accent);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--accent);
+    }
+
+    .confidence {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .transcript-quote {
+      font-style: italic;
+      color: var(--text-muted);
+      font-size: 13px;
+      margin-bottom: 16px;
+      background: rgba(0, 0, 0, 0.2);
+      padding: 8px 12px;
+      border-radius: 8px;
+    }
+
+    .edit-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .field-full {
+      grid-column: 1 / -1;
+    }
+
+    .field-group label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .field-group input, .field-group select {
+      width: 100%;
+      background: #0d131f;
+      border: 1px solid var(--card-border);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .btn-action-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .btn-confirm {
+      flex: 2;
+      background: var(--success);
+      color: white;
+      border: none;
+      padding: 14px;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .btn-confirm:active {
+      background: var(--success-hover);
+    }
+
+    .btn-cancel {
+      flex: 1;
+      background: #1e293b;
+      color: var(--text-muted);
+      border: none;
+      padding: 14px;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* Logged Sets Feed */
+    .history-section {
+      margin-top: 30px;
+    }
+
+    .history-header {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .set-item {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      padding: 14px 16px;
+      border-radius: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .set-meta-exercise {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .set-meta-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .set-stats {
+      text-align: right;
+    }
+
+    .set-stats-main {
+      font-size: 17px;
+      font-weight: 800;
+      color: var(--accent);
+    }
+
+    .set-stats-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <span>COACH3</span> // GYM MODE
+    </div>
+    <div id="session-badge" class="session-badge">Active Session</div>
+  </header>
+
+  <!-- Voice Mic Section -->
+  <div class="mic-container">
+    <button id="mic-btn" class="mic-btn" aria-label="Tap to speak">
+      🎤
+    </button>
+    <div id="mic-label" class="mic-label">Tap microphone and speak your set</div>
+
+    <div class="text-input-wrap">
+      <input type="text" id="manual-text" placeholder='e.g. "5 sets by 8 back squat at 185 lbs"' />
+      <button id="manual-parse-btn">Parse</button>
+    </div>
+  </div>
+
+  <!-- Staged Review Card -->
+  <section id="staged-section" class="staged-section">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Review & Confirm</span>
+        <span id="staged-confidence" class="confidence">95% match</span>
+      </div>
+
+      <div id="staged-transcript" class="transcript-quote">"..."</div>
+
+      <div class="edit-grid">
+        <div class="field-group field-full">
+          <label>Exercise</label>
+          <input type="text" id="field-exercise" />
+        </div>
+
+        <div class="field-group">
+          <label>Sets</label>
+          <input type="number" id="field-sets" min="1" />
+        </div>
+
+        <div class="field-group">
+          <label>Reps per set</label>
+          <input type="number" id="field-reps" min="1" />
+        </div>
+
+        <div class="field-group">
+          <label id="weight-label">Weight</label>
+          <input type="number" id="field-weight" step="0.5" />
+        </div>
+
+        <div class="field-group">
+          <label>Unit</label>
+          <select id="field-unit">
+            <option value="lbs">lbs</option>
+            <option value="kg">kg</option>
+          </select>
+        </div>
+
+        <div class="field-group">
+          <label>RPE (Optional)</label>
+          <input type="number" id="field-rpe" step="0.5" min="1" max="10" placeholder="e.g. 8.5" />
+        </div>
+
+        <div class="field-group">
+          <label>Rest Seconds</label>
+          <input type="number" id="field-rest" step="15" placeholder="e.g. 120" />
+        </div>
+      </div>
+
+      <div class="btn-action-group">
+        <button id="btn-cancel" class="btn-cancel">Discard</button>
+        <button id="btn-confirm" class="btn-confirm">✓ CONFIRM SETS</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Logged Sets Feed -->
+  <section class="history-section">
+    <div class="history-header">
+      <span>Completed Sets Today</span>
+      <span id="total-volume-ticker">0 lbs</span>
+    </div>
+    <div id="history-list" class="history-list">
+      <!-- Items dynamically appended -->
+    </div>
+  </section>
+
+  <script>
+    let activeSessionId = null;
+    let stagedData = null;
+    let loggedSets = [];
+
+    // Initialize Active Session
+    async function initSession() {
+      try {
+        const res = await fetch('/api/v1/gym/sessions/active');
+        if (res.ok) {
+          const session = await res.json();
+          activeSessionId = session.id;
+          document.getElementById('session-badge').textContent = session.title || 'Strength Session';
+        }
+      } catch (err) {
+        console.error('Failed to init session:', err);
+      }
+    }
+
+    // Web Speech API
+    const micBtn = document.getElementById('mic-btn');
+    const micLabel = document.getElementById('mic-label');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition = null;
+    let isListening = false;
+
+    if (SpeechRecognition) {
+      recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        isListening = true;
+        micBtn.classList.add('listening');
+        micLabel.textContent = 'Listening... Speak your set';
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        document.getElementById('manual-text').value = transcript;
+        parseTranscript(transcript);
+      };
+
+      recognition.onerror = (event) => {
+        console.error('Speech error:', event.error);
+        micLabel.textContent = 'Tap to try again';
+        stopListening();
+      };
+
+      recognition.onend = () => {
+        stopListening();
+      };
+    } else {
+      micLabel.textContent = 'Voice dictation not supported in this browser. Use text input below.';
+    }
+
+    function toggleListening() {
+      if (!recognition) return;
+      if (isListening) {
+        recognition.stop();
+        stopListening();
+      } else {
+        recognition.start();
+      }
+    }
+
+    function stopListening() {
+      isListening = false;
+      micBtn.classList.remove('listening');
+      micLabel.textContent = 'Tap microphone and speak your set';
+    }
+
+    micBtn.addEventListener('click', toggleListening);
+
+    // Manual parse submit
+    document.getElementById('manual-parse-btn').addEventListener('click', () => {
+      const text = document.getElementById('manual-text').value.trim();
+      if (text) parseTranscript(text);
+    });
+
+    document.getElementById('manual-text').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const text = e.target.value.trim();
+        if (text) parseTranscript(text);
+      }
+    });
+
+    // Parse Transcript via Backend API
+    async function parseTranscript(text) {
+      try {
+        micLabel.textContent = 'Parsing...';
+        const res = await fetch('/api/v1/gym/parse', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transcript: text, default_unit: 'lbs' })
+        });
+
+        if (!res.ok) throw new Error('Parsing failed');
+        const data = await res.json();
+        renderStagedCard(data);
+        micLabel.textContent = 'Tap microphone and speak your set';
+      } catch (err) {
+        console.error(err);
+        alert('Could not parse workout statement. Try rephrasing.');
+        micLabel.textContent = 'Tap microphone and speak your set';
+      }
+    }
+
+    // Render Staged Card
+    function renderStagedCard(data) {
+      stagedData = data;
+      if (!data.parsed_sets || data.parsed_sets.length === 0) {
+        alert('Could not identify an exercise from statement. Please try again.');
+        return;
+      }
+
+      const firstSet = data.parsed_sets[0];
+      document.getElementById('staged-section').style.display = 'block';
+      document.getElementById('staged-confidence').textContent = `${Math.round(data.confidence_score * 100)}% match`;
+      document.getElementById('staged-transcript').textContent = `"${data.raw_transcript}"`;
+
+      document.getElementById('field-exercise').value = firstSet.exercise_name;
+      document.getElementById('field-sets').value = firstSet.sets || 1;
+      document.getElementById('field-reps').value = firstSet.reps || 1;
+
+      if (firstSet.is_bodyweight) {
+        document.getElementById('weight-label').textContent = 'Added Load (lbs)';
+        document.getElementById('field-weight').value = firstSet.added_weight || 0;
+      } else {
+        document.getElementById('weight-label').textContent = 'Weight';
+        document.getElementById('field-weight').value = firstSet.weight || 0;
+      }
+
+      document.getElementById('field-unit').value = firstSet.weight_unit || 'lbs';
+      document.getElementById('field-rpe').value = firstSet.rpe || '';
+      document.getElementById('field-rest').value = firstSet.rest_seconds || '';
+
+      // Scroll card into view
+      document.getElementById('staged-section').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // Discard Card
+    document.getElementById('btn-cancel').addEventListener('click', () => {
+      document.getElementById('staged-section').style.display = 'none';
+      stagedData = null;
+    });
+
+    // Confirm & Commit Sets
+    document.getElementById('btn-confirm').addEventListener('click', async () => {
+      if (!stagedData || !activeSessionId) return;
+
+      const exerciseName = document.getElementById('field-exercise').value;
+      const setsCount = parseInt(document.getElementById('field-sets').value) || 1;
+      const repsCount = parseInt(document.getElementById('field-reps').value) || 1;
+      const weightVal = parseFloat(document.getElementById('field-weight').value) || 0;
+      const unitVal = document.getElementById('field-unit').value;
+      const rpeVal = parseFloat(document.getElementById('field-rpe').value) || null;
+      const restVal = parseInt(document.getElementById('field-rest').value) || null;
+
+      const isBodyweight = stagedData.parsed_sets[0].is_bodyweight;
+
+      const payload = {
+        idempotency_key: crypto.randomUUID(),
+        raw_transcript: stagedData.raw_transcript,
+        confidence_score: stagedData.confidence_score,
+        was_edited: true,
+        sets: [
+          {
+            exercise_id: stagedData.parsed_sets[0].exercise_id,
+            exercise_name: exerciseName,
+            sets: setsCount,
+            reps: repsCount,
+            weight: isBodyweight ? 0 : weightVal,
+            weight_unit: unitVal,
+            is_bodyweight: isBodyweight,
+            added_weight: isBodyweight ? weightVal : 0,
+            rpe: rpeVal,
+            rest_seconds: restVal
+          }
+        ]
+      };
+
+      try {
+        const res = await fetch(`/api/v1/gym/sessions/${activeSessionId}/sets`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) throw new Error('Commit failed');
+        const committedSets = await res.json();
+
+        // Add to history list
+        committedSets.forEach(s => loggedSets.unshift(s));
+        renderHistory();
+
+        // Dismiss staged card & clear input
+        document.getElementById('staged-section').style.display = 'none';
+        document.getElementById('manual-text').value = '';
+        stagedData = null;
+      } catch (err) {
+        console.error(err);
+        alert('Failed to save set to database.');
+      }
+    });
+
+    // Render History Feed
+    function renderHistory() {
+      const list = document.getElementById('history-list');
+      list.innerHTML = '';
+
+      let totalVolume = 0;
+
+      loggedSets.forEach(s => {
+        const item = document.createElement('div');
+        item.className = 'set-item';
+
+        const weightDisplay = s.is_bodyweight
+          ? (s.added_weight > 0 ? `BW +${s.added_weight} ${s.weight_unit}` : (s.added_weight < 0 ? `BW ${s.added_weight} ${s.weight_unit}` : 'Bodyweight'))
+          : `${s.weight} ${s.weight_unit}`;
+
+        const rpeDisplay = s.rpe ? ` • RPE ${s.rpe}` : '';
+        const timeStr = new Date(s.completed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        if (!s.is_bodyweight) {
+          totalVolume += (s.reps_completed * s.weight);
+        }
+
+        item.innerHTML = `
+          <div>
+            <div class="set-meta-exercise">Set ${s.set_index}: ${s.exercise_name}</div>
+            <div class="set-meta-sub">${timeStr}${rpeDisplay}</div>
+          </div>
+          <div class="set-stats">
+            <div class="set-stats-main">${s.reps_completed} reps @ ${weightDisplay}</div>
+            <div class="set-stats-sub">${s.is_warmup ? 'Warmup Set' : 'Working Set'}</div>
+          </div>
+        `;
+        list.appendChild(item);
+      });
+
+      document.getElementById('total-volume-ticker').textContent = `${Math.round(totalVolume).toLocaleString()} lbs volume`;
+    }
+
+    initSession();
+  </script>
+</body>
+</html>

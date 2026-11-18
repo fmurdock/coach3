@@ -1,12 +1,17 @@
 """FastAPI Application Factory for Coach3."""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from src.api.router import api_router
 from src.core.config import settings
 from src.core.scheduler import start_scheduler, stop_scheduler
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 @asynccontextmanager
@@ -34,6 +39,21 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/gym", tags=["Gym Mode"], response_class=FileResponse)
+async def gym_ui():
+    """Serves the mobile-optimized Gym Mode voice logger interface."""
+    return FileResponse(STATIC_DIR / "gym.html")
+
+
+@app.get("/", tags=["Root"], response_class=FileResponse)
+async def root_ui():
+    """Default landing interface."""
+    return FileResponse(STATIC_DIR / "gym.html")
 
 
 @app.get("/health", tags=["Health"])

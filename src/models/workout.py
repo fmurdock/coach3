@@ -14,7 +14,7 @@ class WorkoutSession(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("provider", "external_id", name="uq_provider_external_id"),
         CheckConstraint(
-            "discipline IN ('outdoor_run', 'indoor_row', 'erg_bike')",
+            "discipline IN ('outdoor_run', 'indoor_row', 'erg_bike', 'strength')",
             name="check_discipline_valid",
         ),
         CheckConstraint(
@@ -87,4 +87,16 @@ class WorkoutSession(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         back_populates="workout",
         cascade="all, delete-orphan",
         order_by="WorkoutSplit.split_index",
+    )
+    strength_sets: Mapped[list["StrengthSet"]] = relationship(
+        "StrengthSet",
+        back_populates="workout_session",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="StrengthSet.set_index",
+    )
+    voice_logs: Mapped[list["VoiceTranscriptionLog"]] = relationship(
+        "VoiceTranscriptionLog",
+        back_populates="workout_session",
+        lazy="selectin",
     )

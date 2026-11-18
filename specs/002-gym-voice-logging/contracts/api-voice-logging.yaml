@@ -1,0 +1,337 @@
+openapi: 3.1.0
+info:
+  title: Coach3 Gym Voice Logging API
+  description: Endpoints for natural language parsing, staging, and persisting strength sets.
+  version: 1.0.0
+
+paths:
+  /api/v1/gym/parse:
+    post:
+      summary: Parse spoken gym transcript into structured set candidates
+      description: Receives client-side speech transcript, applies deterministic grammar and alias matching, and returns a staged set preview.
+      operationId: parseGymTranscript
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ParseTranscriptRequest'
+      responses:
+        '200':
+          description: Successfully parsed set candidates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParsedStageResponse'
+        '422':
+          description: Validation error or completely unparseable input
+
+  /api/v1/gym/exercises:
+    get:
+      summary: List all catalog exercises with search and category filters
+      operationId: listExercises
+      parameters:
+        - name: query
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: category
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [barbell, dumbbell, bodyweight, machine, cable]
+      responses:
+        '200':
+          description: List of strength exercises
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StrengthExercise'
+
+  /api/v1/gym/sessions/{session_id}/sets:
+    post:
+      summary: Commit confirmed strength sets to a session
+      description: Atomically writes verified sets into the database with idempotency protection.
+      operationId: commitStrengthSets
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommitSetsRequest'
+      responses:
+        '201':
+          description: Sets successfully saved
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StrengthSetResponse'
+        '400':
+          description: Invalid session or payload
+        '404':
+          description: Session or exercise not found
+
+  /api/v1/gym/sessions/active:
+    get:
+      summary: Get or create active strength workout session
+      description: Returns the user's ongoing strength workout session or creates a new one.
+      operationId: getActiveStrengthSession
+      responses:
+        '200':
+          description: Active strength session details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutSessionResponse'
+
+components:
+  schemas:
+    ParseTranscriptRequest:
+      type: object
+      required:
+        - transcript
+      properties:
+        transcript:
+          type: string
+          example: "5 sets by 8 reps of back squat at 185 pounds"
+        default_unit:
+          type: string
+          enum: [lbs, kg]
+          default: lbs
+        session_id:
+          type: string
+          format: uuid
+          nullable: true
+
+    ParsedSetCandidate:
+      type: object
+      required:
+        - exercise_id
+        - exercise_name
+        - sets
+        - reps
+        - weight
+        - weight_unit
+        - is_bodyweight
+        - added_weight
+      properties:
+        exercise_id:
+          type: string
+          format: uuid
+        exercise_name:
+          type: string
+          example: "Barbell Back Squat"
+        category:
+          type: string
+          example: "barbell"
+        sets:
+          type: integer
+          example: 5
+        reps:
+          type: integer
+          example: 8
+        weight:
+          type: number
+          format: float
+          example: 185.0
+        weight_unit:
+          type: string
+          enum: [lbs, kg]
+          example: "lbs"
+        is_bodyweight:
+          type: boolean
+          example: false
+        added_weight:
+          type: number
+          format: float
+          example: 0.0
+        rpe:
+          type: number
+          format: float
+          nullable: true
+          example: 8.5
+        is_warmup:
+          type: boolean
+          default: false
+        rest_seconds:
+          type: integer
+          nullable: true
+          example: 120
+
+    ParsedStageResponse:
+      type: object
+      required:
+        - raw_transcript
+        - parsed_sets
+        - confidence_score
+        - is_ambiguous
+      properties:
+        raw_transcript:
+          type: string
+          example: "3 sets of 12 pullups with an extra 30 pounds added"
+        parsed_sets:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParsedSetCandidate'
+        confidence_score:
+          type: number
+          format: float
+          example: 0.95
+        is_ambiguous:
+          type: boolean
+          example: false
+        alternative_exercises:
+          type: array
+          items:
+            $ref: '#/components/schemas/StrengthExercise'
+
+    CommitSetsRequest:
+      type: object
+      required:
+        - sets
+      properties:
+        idempotency_key:
+          type: string
+          format: uuid
+        raw_transcript:
+          type: string
+          nullable: true
+        confidence_score:
+          type: number
+          format: float
+          nullable: true
+        was_edited:
+          type: boolean
+          default: false
+        sets:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParsedSetCandidate'
+
+    StrengthExercise:
+      type: object
+      required:
+        - id
+        - canonical_name
+        - slug
+        - category
+        - primary_muscle_group
+        - is_bodyweight
+        - default_unit
+      properties:
+        id:
+          type: string
+          format: uuid
+        canonical_name:
+          type: string
+          example: "Pull-Up"
+        slug:
+          type: string
+          example: "pull-up"
+        category:
+          type: string
+          example: "bodyweight"
+        primary_muscle_group:
+          type: string
+          example: "back"
+        is_bodyweight:
+          type: boolean
+          example: true
+        default_unit:
+          type: string
+          example: "lbs"
+
+    StrengthSetResponse:
+      type: object
+      required:
+        - id
+        - workout_session_id
+        - exercise_id
+        - set_index
+        - reps_completed
+        - weight
+        - weight_unit
+        - is_bodyweight
+        - added_weight
+        - is_warmup
+        - completed_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        workout_session_id:
+          type: string
+          format: uuid
+        exercise_id:
+          type: string
+          format: uuid
+        exercise_name:
+          type: string
+          example: "Barbell Back Squat"
+        set_index:
+          type: integer
+          example: 1
+        reps_completed:
+          type: integer
+          example: 8
+        target_reps:
+          type: integer
+          nullable: true
+        weight:
+          type: number
+          example: 185.0
+        weight_unit:
+          type: string
+          example: "lbs"
+        is_bodyweight:
+          type: boolean
+          example: false
+        added_weight:
+          type: number
+          example: 0.0
+        rpe:
+          type: number
+          nullable: true
+          example: 8.5
+        is_warmup:
+          type: boolean
+          example: false
+        rest_seconds:
+          type: integer
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+
+    WorkoutSessionResponse:
+      type: object
+      required:
+        - id
+        - sport_type
+        - start_time
+      properties:
+        id:
+          type: string
+          format: uuid
+        sport_type:
+          type: string
+          example: "strength"
+        start_time:
+          type: string
+          format: date-time
+        title:
+          type: string
+          nullable: true

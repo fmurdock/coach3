@@ -28,6 +28,11 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    voice_logs: Mapped[list["VoiceTranscriptionLog"]] = relationship(
+        "VoiceTranscriptionLog",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 class UserHeartRateProfile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
