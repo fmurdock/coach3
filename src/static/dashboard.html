@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Coach3 — Training Volume & Performance Dashboard</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card: #131a29;
+      --card-border: #1f293d;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-hover: #0284c7;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --purple: #a855f7;
+      --badge-bg: #1e293b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      padding: 16px;
+      padding-bottom: 40px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .brand {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand span {
+      color: var(--accent);
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 10px;
+    }
+
+    .nav-btn {
+      background: var(--badge-bg);
+      border: 1px solid var(--card-border);
+      color: var(--text);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 999px;
+      transition: all 0.2s ease;
+    }
+
+    .nav-btn.active {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* Filter Bar */
+    .filter-bar {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 8px;
+      margin-bottom: 20px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .filter-pill {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 999px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s ease;
+    }
+
+    .filter-pill:hover {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+
+    .filter-pill.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #04101e;
+      font-weight: 700;
+    }
+
+    /* KPI Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    @media (min-width: 768px) {
+      .kpi-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    @media (min-width: 1024px) {
+      .kpi-grid {
+        grid-template-columns: repeat(6, 1fr);
+      }
+    }
+
+    .kpi-card {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .kpi-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .kpi-value {
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--text);
+      letter-spacing: -0.5px;
+    }
+
+    .kpi-sub {
+      font-size: 11px;
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    /* Charts Grid */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    @media (min-width: 900px) {
+      .charts-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .chart-card {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .chart-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .chart-title {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+    }
+
+    .chart-container {
+      position: relative;
+      height: 240px;
+      width: 100%;
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 200px;
+      color: var(--text-muted);
+      font-size: 13px;
+      text-align: center;
+      gap: 6px;
+    }
+
+    /* PR Showcase List */
+    .pr-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 280px;
+      overflow-y: auto;
+    }
+
+    .pr-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(19, 26, 41, 0.7);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 10px 14px;
+    }
+
+    .pr-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .pr-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .pr-date {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .pr-badge-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .pr-value {
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--accent);
+    }
+
+    .recent-tag {
+      background: rgba(16, 185, 129, 0.2);
+      border: 1px solid var(--success);
+      color: var(--success);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+  </style>
+  <!-- Self-Hosted Standalone Chart.js Bundle (Zero External CDN) -->
+  <script src="/static/vendor/chart.umd.js"></script>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      Coach<span>3</span> Volume Dashboard
+    </div>
+    <div class="nav-links">
+      <a href="/gym" class="nav-btn">Gym Mode</a>
+      <a href="/dashboard" class="nav-btn active">Dashboard</a>
+    </div>
+  </header>
+
+  <!-- Filter Pills -->
+  <div class="filter-bar">
+    <button class="filter-pill" data-window="7d">Last 7 Days</button>
+    <button class="filter-pill active" data-window="30d">Last 30 Days</button>
+    <button class="filter-pill" data-window="90d">Last 90 Days</button>
+    <button class="filter-pill" data-window="ytd">Year to Date</button>
+    <button class="filter-pill" data-window="all">All Time</button>
+  </div>
+
+  <!-- KPI Summary Grid -->
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <span class="kpi-title">Total Duration</span>
+      <span class="kpi-value" id="kpi-duration">0.0h</span>
+      <span class="kpi-sub" id="kpi-duration-sub">All training</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-title">Zone 2 Cardio</span>
+      <span class="kpi-value" id="kpi-zone2">0.0h</span>
+      <span class="kpi-sub" id="kpi-zone2-sub">0% of cardio</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-title">Running</span>
+      <span class="kpi-value" id="kpi-run">0.0 mi</span>
+      <span class="kpi-sub" id="kpi-run-sub">Outdoor miles</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-title">Erg Work</span>
+      <span class="kpi-value" id="kpi-erg">0 m</span>
+      <span class="kpi-sub" id="kpi-erg-sub">Row + Bike meters</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-title">Volume Load</span>
+      <span class="kpi-value" id="kpi-volume">0 lbs</span>
+      <span class="kpi-sub" id="kpi-volume-sub">Effective tonnage</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-title">Working Sets</span>
+      <span class="kpi-value" id="kpi-sets">0</span>
+      <span class="kpi-sub" id="kpi-sets-sub">Excludes warmups</span>
+    </div>
+  </div>
+
+  <!-- Charts Grid -->
+  <div class="charts-grid">
+    <!-- Chart 1: Weekly Mileage & Volume Trend -->
+    <div class="chart-card">
+      <div class="chart-header">
+        <h3 class="chart-title">Weekly Cardio & Zone 2 Trend</h3>
+      </div>
+      <div class="chart-container" id="trend-container">
+        <canvas id="weeklyTrendChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Chart 2: Polarized Heart Rate Distribution -->
+    <div class="chart-card">
+      <div class="chart-header">
+        <h3 class="chart-title">Heart Rate Zone Distribution</h3>
+      </div>
+      <div class="chart-container" id="zone-container">
+        <canvas id="hrZoneChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Chart 3: Muscle Group Effective Sets -->
+    <div class="chart-card">
+      <div class="chart-header">
+        <h3 class="chart-title">Muscle Group Working Sets</h3>
+      </div>
+      <div class="chart-container" id="muscle-container">
+        <canvas id="muscleGroupChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Chart 4: PR Trophy Showcase -->
+    <div class="chart-card">
+      <div class="chart-header">
+        <h3 class="chart-title">Personal Records & Peaks</h3>
+      </div>
+      <div class="pr-list" id="pr-list-container">
+        <div class="empty-state">Loading personal records...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentWindow = '30d';
+    let weeklyChart = null;
+    let zoneChart = null;
+    let muscleChart = null;
+
+    // Filter pill interactions
+    document.querySelectorAll('.filter-pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.filter-pill').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentWindow = btn.getAttribute('data-window');
+        loadDashboardData(currentWindow);
+      });
+    });
+
+    async function loadDashboardData(windowPreset) {
+      try {
+        const [summaryRes, prsRes] = await Promise.all([
+          fetch(`/api/v1/analytics/summary?window=${windowPreset}`).then(r => r.json()),
+          fetch(`/api/v1/analytics/prs?window=${windowPreset}`).then(r => r.json())
+        ]);
+
+        updateKPIs(summaryRes);
+        renderWeeklyTrend(summaryRes.cardio);
+        renderHRZoneDistribution(summaryRes.cardio);
+        renderMuscleGroupSets(summaryRes.strength);
+        renderPRShowcase(prsRes);
+      } catch (err) {
+        console.error('Failed to load dashboard data:', err);
+      }
+    }
+
+    function updateKPIs(data) {
+      document.getElementById('kpi-duration').textContent = `${data.total_duration_hours || 0}h`;
+      document.getElementById('kpi-zone2').textContent = `${data.zone2_duration_hours || 0}h`;
+      document.getElementById('kpi-zone2-sub').textContent = `${data.zone2_percentage || 0}% of cardio`;
+      document.getElementById('kpi-run').textContent = `${data.total_cardio_distance_miles || 0} mi`;
+      
+      const rowM = data.cardio ? data.cardio.erg_row_meters || 0 : 0;
+      const bikeM = data.cardio ? data.cardio.erg_bike_meters || 0 : 0;
+      document.getElementById('kpi-erg').textContent = `${(rowM + bikeM).toLocaleString()} m`;
+
+      document.getElementById('kpi-volume').textContent = `${Math.round(data.total_strength_volume_lbs || 0).toLocaleString()} lbs`;
+      document.getElementById('kpi-sets').textContent = data.effective_working_sets || 0;
+    }
+
+    function renderWeeklyTrend(cardio) {
+      const ctx = document.getElementById('weeklyTrendChart').getContext('2d');
+      const trend = (cardio && cardio.weekly_trend && cardio.weekly_trend.length > 0)
+        ? cardio.weekly_trend
+        : [{ week_label: 'Current', miles: 0, zone2_hours: 0 }];
+
+      const labels = trend.map(t => t.week_label);
+      const miles = trend.map(t => t.miles);
+      const zone2 = trend.map(t => t.zone2_hours);
+
+      if (weeklyChart) weeklyChart.destroy();
+
+      weeklyChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'Miles',
+              data: miles,
+              backgroundColor: '#38bdf8',
+              borderRadius: 6,
+            },
+            {
+              label: 'Zone 2 Hours',
+              data: zone2,
+              backgroundColor: '#10b981',
+              borderRadius: 6,
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { labels: { color: '#94a3b8', font: { size: 12 } } }
+          },
+          scales: {
+            x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
+            y: { ticks: { color: '#94a3b8' }, grid: { color: '#1f293d' } }
+          }
+        }
+      });
+    }
+
+    function renderHRZoneDistribution(cardio) {
+      const ctx = document.getElementById('hrZoneChart').getContext('2d');
+      const dist = (cardio && cardio.zone_distribution_hours) ? cardio.zone_distribution_hours : {
+        zone1: 0, zone2: 0, zone3: 0, zone4: 0, zone5: 0
+      };
+
+      const dataVals = [dist.zone1, dist.zone2, dist.zone3, dist.zone4, dist.zone5];
+      const hasData = dataVals.some(v => v > 0);
+
+      if (zoneChart) zoneChart.destroy();
+
+      zoneChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels: ['Zone 1 (Warmup)', 'Zone 2 (Aerobic)', 'Zone 3 (Tempo)', 'Zone 4 (Threshold)', 'Zone 5 (Anaerobic)'],
+          datasets: [{
+            data: hasData ? dataVals : [1, 1, 1, 1, 1],
+            backgroundColor: hasData
+              ? ['#64748b', '#10b981', '#38bdf8', '#f59e0b', '#ef4444']
+              : ['#1e293b', '#1e293b', '#1e293b', '#1e293b', '#1e293b'],
+            borderWidth: 2,
+            borderColor: '#131a29'
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'right', labels: { color: '#94a3b8', font: { size: 11 } } }
+          }
+        }
+      });
+    }
+
+    function renderMuscleGroupSets(strength) {
+      const ctx = document.getElementById('muscleGroupChart').getContext('2d');
+      const setsMap = (strength && strength.muscle_group_sets) ? strength.muscle_group_sets : {};
+      const labels = Object.keys(setsMap);
+      const values = Object.values(setsMap);
+
+      if (muscleChart) muscleChart.destroy();
+
+      muscleChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels.length > 0 ? labels : ['No Sets Logged'],
+          datasets: [{
+            label: 'Effective Sets',
+            data: values.length > 0 ? values : [0],
+            backgroundColor: '#a855f7',
+            borderRadius: 6
+          }]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false }
+          },
+          scales: {
+            x: { ticks: { color: '#94a3b8', stepSize: 1 }, grid: { color: '#1f293d' } },
+            y: { ticks: { color: '#94a3b8' }, grid: { display: false } }
+          }
+        }
+      });
+    }
+
+    function renderPRShowcase(prs) {
+      const container = document.getElementById('pr-list-container');
+      if (!prs || prs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No personal records logged yet. Complete workouts to set initial PRs!</div>';
+        return;
+      }
+
+      container.innerHTML = prs.map(pr => `
+        <div class="pr-item">
+          <div class="pr-info">
+            <span class="pr-title">${pr.title}</span>
+            <span class="pr-date">${new Date(pr.achieved_at).toLocaleDateString()}</span>
+          </div>
+          <div class="pr-badge-wrap">
+            <span class="pr-value">${pr.record_display}</span>
+            ${pr.is_recent ? '<span class="recent-tag">Recent</span>' : ''}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Initialize on page load
+    loadDashboardData(currentWindow);
+  </script>
+</body>
+</html>

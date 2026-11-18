@@ -1,0 +1,232 @@
+openapi: 3.1.0
+info:
+  title: Coach3 Volume & Peak Performance Analytics API
+  description: Endpoints for aggregated cardiovascular volume, strength volume load, Zone 2 time distributions, and personal records (PRs).
+  version: 1.0.0
+
+paths:
+  /api/v1/analytics/summary:
+    get:
+      summary: Retrieve unified summary across cardio and strength
+      operationId: getUnifiedSummary
+      parameters:
+        - name: start_date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: window
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [7d, 30d, 90d, ytd, all]
+            default: 30d
+      responses:
+        '200':
+          description: Aggregated volume summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedVolumeSummary'
+
+  /api/v1/analytics/cardio:
+    get:
+      summary: Retrieve detailed cardiovascular volume and Zone 2 trends
+      operationId: getCardioAnalytics
+      parameters:
+        - name: window
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [7d, 30d, 90d, ytd, all]
+            default: 30d
+      responses:
+        '200':
+          description: Cardiovascular analytics and weekly trends
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CardioAnalyticsResponse'
+
+  /api/v1/analytics/strength:
+    get:
+      summary: Retrieve strength volume load and muscle group distributions
+      operationId: getStrengthAnalytics
+      parameters:
+        - name: window
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [7d, 30d, 90d, ytd, all]
+            default: 30d
+      responses:
+        '200':
+          description: Strength volume metrics and muscle breakdown
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StrengthAnalyticsResponse'
+
+  /api/v1/analytics/prs:
+    get:
+      summary: Retrieve personal records and peak performances
+      operationId: getPersonalRecords
+      parameters:
+        - name: window
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [7d, 30d, 90d, ytd, all]
+            default: all
+      responses:
+        '200':
+          description: List of personal records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PersonalRecordItem'
+
+components:
+  schemas:
+    UnifiedVolumeSummary:
+      type: object
+      required:
+        - start_date
+        - end_date
+        - total_duration_hours
+        - zone2_duration_hours
+        - zone2_percentage
+        - total_cardio_distance_miles
+        - total_strength_volume_lbs
+        - effective_working_sets
+      properties:
+        start_date:
+          type: string
+          format: date-time
+        end_date:
+          type: string
+          format: date-time
+        total_duration_hours:
+          type: number
+          example: 24.5
+        zone2_duration_hours:
+          type: number
+          example: 18.2
+        zone2_percentage:
+          type: number
+          example: 74.3
+        total_cardio_distance_miles:
+          type: number
+          example: 45.8
+        total_strength_volume_lbs:
+          type: number
+          example: 84500.0
+        effective_working_sets:
+          type: integer
+          example: 48
+
+    CardioAnalyticsResponse:
+      type: object
+      required:
+        - total_distance_km
+        - total_distance_miles
+        - total_duration_hours
+        - zone2_duration_hours
+        - zone_distribution_hours
+        - weekly_trend
+      properties:
+        total_distance_km:
+          type: number
+        total_distance_miles:
+          type: number
+        total_duration_hours:
+          type: number
+        zone2_duration_hours:
+          type: number
+        zone_distribution_hours:
+          type: object
+          additionalProperties:
+            type: number
+        weekly_trend:
+          type: array
+          items:
+            type: object
+            properties:
+              week_label:
+                type: string
+              miles:
+                type: number
+              zone2_hours:
+                type: number
+
+    StrengthAnalyticsResponse:
+      type: object
+      required:
+        - total_volume_load_lbs
+        - effective_working_sets
+        - total_reps
+        - muscle_group_sets
+        - muscle_group_volume
+      properties:
+        total_volume_load_lbs:
+          type: number
+        effective_working_sets:
+          type: integer
+        total_reps:
+          type: integer
+        muscle_group_sets:
+          type: object
+          additionalProperties:
+            type: integer
+        muscle_group_volume:
+          type: object
+          additionalProperties:
+            type: number
+        added_calisthenic_load_lbs:
+          type: number
+
+    PersonalRecordItem:
+      type: object
+      required:
+        - discipline
+        - title
+        - milestone_type
+        - record_display
+        - record_value
+        - record_unit
+        - achieved_at
+        - is_recent
+      properties:
+        discipline:
+          type: string
+        title:
+          type: string
+        exercise_name:
+          type: string
+          nullable: true
+        milestone_type:
+          type: string
+        record_display:
+          type: string
+        record_value:
+          type: number
+        record_unit:
+          type: string
+        achieved_at:
+          type: string
+          format: date-time
+        is_recent:
+          type: boolean

@@ -44,6 +44,12 @@ if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+@app.get("/dashboard", tags=["Dashboard"], response_class=FileResponse)
+async def dashboard_ui():
+    """Serves the interactive training volume and peak performance dashboard."""
+    return FileResponse(STATIC_DIR / "dashboard.html")
+
+
 @app.get("/gym", tags=["Gym Mode"], response_class=FileResponse)
 async def gym_ui():
     """Serves the mobile-optimized Gym Mode voice logger interface."""
