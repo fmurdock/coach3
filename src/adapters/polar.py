@@ -1,7 +1,7 @@
 """Polar AccessLink API adapter for outdoor running workouts."""
 
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import re
 from typing import Any
 import httpx
@@ -45,7 +45,7 @@ class PolarAdapter(BaseIngestionAdapter):
 
     AUTH_URL = "https://flow.polar.com/oauth2/authorization"
     TOKEN_URL = "https://polarremote.com/v2/oauth2/token"
-    BASE_URL = "https://polarremote.com/v2"
+    BASE_URL = "https://www.polaraccesslink.com/v3"
 
     def __init__(
         self,
@@ -62,10 +62,10 @@ class PolarAdapter(BaseIngestionAdapter):
             "response_type": "code",
             "client_id": self.client_id,
             "redirect_uri": self.redirect_uri,
+            "scope": "accesslink.read_all",
             "state": state,
         }
-        query = "&".join(f"{k}={httpx.URL('', params={k: v}).query.decode()}" for k, v in params.items())
-        return f"{self.AUTH_URL}?{query}"
+        return str(httpx.URL(self.AUTH_URL, params=params))
 
     async def exchange_code(self, code: str) -> dict[str, Any]:
         credentials = f"{self.client_id}:{self.client_secret}"
@@ -107,6 +107,53 @@ class PolarAdapter(BaseIngestionAdapter):
             resp.raise_for_status()
             return resp.json()
 
+    async def verify_connection(self, access_token: str, user_id: str | None = None) -> dict[str, Any]:
+        """Tests connectivity to Polar AccessLink using the stored access token."""
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        }
+        url = f"{self.BASE_URL}/users/{user_id}" if user_id else f"{self.BASE_URL}/users"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code in (200, 201):
+                    data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                    first_name = data.get("first-name")
+                    last_name = data.get("last-name")
+                    if first_name or last_name:
+                        athlete_name = f"{first_name or ''} {last_name or ''}".strip()
+                    else:
+                        athlete_id = str(data.get("polar-user-id", user_id or "Registered Athlete"))
+                        athlete_name = f"Polar Athlete #{athlete_id}"
+                    return {
+                        "is_connected": True,
+                        "status": "healthy",
+                        "athlete_name": athlete_name,
+                        "error": None,
+                    }
+                elif resp.status_code == 401:
+                    return {
+                        "is_connected": False,
+                        "status": "expired",
+                        "athlete_name": None,
+                        "error": "Access token expired or revoked.",
+                    }
+                else:
+                    return {
+                        "is_connected": False,
+                        "status": "error",
+                        "athlete_name": None,
+                        "error": f"Polar API error: HTTP {resp.status_code}",
+                    }
+        except Exception as exc:
+            return {
+                "is_connected": False,
+                "status": "error",
+                "athlete_name": None,
+                "error": str(exc),
+            }
+
     def normalize_polar_exercise(
         self, exercise_data: dict[str, Any], samples_data: dict[str, Any] | None = None
     ) -> NormalizedWorkout:
@@ -115,9 +162,16 @@ class PolarAdapter(BaseIngestionAdapter):
         device = exercise_data.get("device", "Polar Watch")
         title = f"Polar Run - {device}"
 
-        start_time_str = exercise_data.get("start_time")
+        start_time_str = exercise_data.get("start-time") or exercise_data.get("start_time")
+        offset_min = exercise_data.get("start-time-utc-offset")
         if start_time_str:
-            start_time_utc = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
+            if "Z" in start_time_str or "+" in start_time_str or (len(start_time_str) > 19 and "-" in start_time_str[19:]):
+                start_time_utc = datetime.fromisoformat(start_time_str.replace("Z", "+00:00")).astimezone(timezone.utc)
+            elif offset_min is not None:
+                tz = timezone(timedelta(minutes=int(offset_min)))
+                start_time_utc = datetime.fromisoformat(start_time_str).replace(tzinfo=tz).astimezone(timezone.utc)
+            else:
+                start_time_utc = datetime.fromisoformat(start_time_str).replace(tzinfo=timezone.utc)
         else:
             start_time_utc = datetime.now(timezone.utc)
 
@@ -129,7 +183,7 @@ class PolarAdapter(BaseIngestionAdapter):
         if distance_m > 0 and duration_sec > 0:
             avg_pace = duration_sec / (distance_m / 1000.0)
 
-        hr_info = exercise_data.get("heart_rate") or {}
+        hr_info = exercise_data.get("heart-rate") or exercise_data.get("heart_rate") or {}
         avg_hr = hr_info.get("average")
         max_hr = hr_info.get("maximum")
 
@@ -143,8 +197,9 @@ class PolarAdapter(BaseIngestionAdapter):
 
         if samples_data:
             # HR samples
-            for sample in samples_data.get("heart_rate", []):
-                sec = float(sample.get("elapsed_sec", 0))
+            hr_list = samples_data.get("heart_rate") or samples_data.get("heart-rate") or []
+            for sample in hr_list:
+                sec = float(sample.get("elapsed_sec", sample.get("elapsed-sec", 0)))
                 bpm = int(sample.get("bpm", 0))
                 hr_samples.append(
                     NormalizedHeartRateSample(
@@ -155,8 +210,9 @@ class PolarAdapter(BaseIngestionAdapter):
                 )
 
             # GPS route points
-            for pt in samples_data.get("coordinates", []):
-                sec = float(pt.get("elapsed_sec", 0))
+            coord_list = samples_data.get("coordinates") or []
+            for pt in coord_list:
+                sec = float(pt.get("elapsed_sec", pt.get("elapsed-sec", 0)))
                 lat = float(pt.get("latitude", 0.0))
                 lon = float(pt.get("longitude", 0.0))
                 alt = pt.get("altitude")
@@ -205,9 +261,9 @@ class PolarAdapter(BaseIngestionAdapter):
                 headers=headers,
                 json={"member-id": member_id},
             )
-            # 200 = registered, 409 = already registered
-            if resp.status_code in (200, 409):
-                return resp.json() if resp.status_code == 200 else None
+            # 200/201 = registered, 409 = already registered
+            if resp.status_code in (200, 201, 409):
+                return resp.json() if resp.status_code in (200, 201) else None
             resp.raise_for_status()
             return resp.json()
 
@@ -223,13 +279,10 @@ class PolarAdapter(BaseIngestionAdapter):
             "Accept": "application/json",
         }
 
+        user_id = (cursor.get("user_id") if cursor else None) or "me"
+
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Step 1: Create an exercise transaction to retrieve new exercises
-            # Polar AccessLink transaction endpoint: POST /v2/users/{user_id}/exercise-transactions
-            # When user_id is unknown or single-user token, Polar also supports pull via /v2/users/exercise-transactions
-            # or direct query.
-            user_id = cursor.get("user_id") if cursor else None
-            tx_url = f"{self.BASE_URL}/users/{user_id}/exercise-transactions" if user_id else f"{self.BASE_URL}/users/exercise-transactions"
+            tx_url = f"{self.BASE_URL}/users/{user_id}/exercise-transactions"
 
             try:
                 tx_resp = await client.post(tx_url, headers=headers)
@@ -238,10 +291,6 @@ class PolarAdapter(BaseIngestionAdapter):
 
             if tx_resp.status_code == 204:
                 # 204 No Content: No new exercises available
-                return SyncBatchResult(workouts=[], next_cursor=cursor, has_more=False)
-
-            if tx_resp.status_code == 404 and not user_id:
-                # Fallback if user_id is required: check userinfo or return empty
                 return SyncBatchResult(workouts=[], next_cursor=cursor, has_more=False)
 
             tx_resp.raise_for_status()
@@ -268,11 +317,37 @@ class PolarAdapter(BaseIngestionAdapter):
                 ex_data = ex_resp.json()
 
                 # Fetch detailed samples (coordinates and heart rate)
-                samples_data = None
-                samples_url = f"{ex_url}/samples"
-                samples_resp = await client.get(samples_url, headers=headers)
-                if samples_resp.status_code == 200:
-                    samples_data = samples_resp.json()
+                samples_data: dict[str, Any] = {"heart_rate": [], "coordinates": []}
+                try:
+                    samples_url = f"{ex_url}/samples"
+                    samples_resp = await client.get(samples_url, headers=headers)
+                    if samples_resp.status_code == 200:
+                        raw_samples_resp = samples_resp.json()
+                        sample_links = raw_samples_resp.get("samples")
+                        if isinstance(sample_links, list):
+                            for s_url in sample_links:
+                                s_resp = await client.get(s_url, headers=headers)
+                                if s_resp.status_code == 200:
+                                    s_json = s_resp.json()
+                                    stype = s_json.get("sample-type")
+                                    r_rate = float(s_json.get("recording-rate", 1))
+                                    s_data = s_json.get("data", "")
+                                    if stype == 0:  # Heart rate
+                                        if isinstance(s_data, str):
+                                            bpm_list = [int(v.strip()) for v in s_data.split(",") if v.strip().isdigit()]
+                                        elif isinstance(s_data, list):
+                                            bpm_list = [int(v) for v in s_data if isinstance(v, (int, float))]
+                                        else:
+                                            bpm_list = []
+                                        for idx, bpm in enumerate(bpm_list):
+                                            samples_data["heart_rate"].append({
+                                                "elapsed_sec": idx * r_rate,
+                                                "bpm": bpm,
+                                            })
+                        elif isinstance(raw_samples_resp, dict) and ("heart_rate" in raw_samples_resp or "coordinates" in raw_samples_resp):
+                            samples_data = raw_samples_resp
+                except Exception:
+                    pass
 
                 workout = self.normalize_polar_exercise(ex_data, samples_data)
                 normalized_workouts.append(workout)

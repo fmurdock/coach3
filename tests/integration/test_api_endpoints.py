@@ -23,18 +23,35 @@ async def test_health_check_endpoint():
 
 
 @pytest.mark.asyncio
-async def test_auth_url_endpoint():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp_polar = await client.get("/api/v1/integrations/polar/auth-url")
-        assert resp_polar.status_code == 200
-        assert "auth_url" in resp_polar.json()
-        assert "flow.polar.com" in resp_polar.json()["auth_url"]
+async def test_auth_url_endpoint(db_session: AsyncSession):
+    app.dependency_overrides[get_db] = lambda: db_session
+    from src.core.config import settings
+    orig_polar_id = settings.POLAR_CLIENT_ID
+    orig_polar_secret = settings.POLAR_CLIENT_SECRET
+    orig_c2_id = settings.CONCEPT2_CLIENT_ID
+    orig_c2_secret = settings.CONCEPT2_CLIENT_SECRET
+    settings.POLAR_CLIENT_ID = "polar_test_id"
+    settings.POLAR_CLIENT_SECRET = "polar_test_secret"
+    settings.CONCEPT2_CLIENT_ID = "c2_test_id"
+    settings.CONCEPT2_CLIENT_SECRET = "c2_test_secret"
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp_polar = await client.get("/api/v1/integrations/polar/auth-url")
+            assert resp_polar.status_code == 200
+            assert "auth_url" in resp_polar.json()
+            assert "flow.polar.com" in resp_polar.json()["auth_url"]
 
-        resp_c2 = await client.get("/api/v1/integrations/concept2/auth-url")
-        assert resp_c2.status_code == 200
-        assert "auth_url" in resp_c2.json()
-        assert "log.concept2.com" in resp_c2.json()["auth_url"]
+            resp_c2 = await client.get("/api/v1/integrations/concept2/auth-url")
+            assert resp_c2.status_code == 200
+            assert "auth_url" in resp_c2.json()
+            assert "log.concept2.com" in resp_c2.json()["auth_url"]
+    finally:
+        settings.POLAR_CLIENT_ID = orig_polar_id
+        settings.POLAR_CLIENT_SECRET = orig_polar_secret
+        settings.CONCEPT2_CLIENT_ID = orig_c2_id
+        settings.CONCEPT2_CLIENT_SECRET = orig_c2_secret
+        app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.mark.asyncio

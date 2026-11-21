@@ -2,7 +2,7 @@
 
 from datetime import datetime
 import uuid
-from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -65,6 +65,7 @@ class WorkoutSession(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     # Status & Annotations
     status: Mapped[str] = mapped_column(String(50), default="active", nullable=False)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     user_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 

@@ -434,6 +434,7 @@
       <a href="/gym" class="nav-btn">Gym Mode</a>
       <a href="/dashboard" class="nav-btn">Dashboard</a>
       <a href="/coach" class="nav-btn active">AI Coach</a>
+      <a href="/config" class="nav-btn">Settings</a>
     </div>
   </header>
 
@@ -836,7 +837,14 @@
         });
         if (!res.ok) {
           const err = await res.json();
-          alert('Analysis error: ' + (err.detail || res.statusText));
+          const detail = err.detail || res.statusText;
+          const container = document.getElementById('critique-result');
+          container.style.display = 'block';
+          container.innerHTML = `
+            <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid var(--danger); border-radius: 8px; padding: 14px; color: #fca5a5; font-size: 14px;">
+              <strong>Unable to run critique:</strong> ${detail}<br><br>
+              💡 <em>Tip:</em> Head to <a href="/config" style="color: var(--accent); text-decoration: underline; font-weight: 600;">Settings</a> to configure your AI provider or load sample workouts to analyze.
+            </div>`;
           return;
         }
         const critique = await res.json();

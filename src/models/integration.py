@@ -1,4 +1,4 @@
-"""Integration Account and Sync Audit Log models."""
+"""Integration Account, Client Config, and Sync Audit Log models."""
 
 from datetime import datetime
 import uuid
@@ -7,6 +7,21 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+
+
+class IntegrationClientConfig(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Stores encrypted OAuth developer credentials (client ID & secret) per provider."""
+    __tablename__ = "integration_client_configs"
+    __table_args__ = (
+        CheckConstraint("provider IN ('polar', 'concept2')", name="check_client_provider_valid"),
+        UniqueConstraint("provider", name="uq_client_config_provider"),
+    )
+
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+    encrypted_client_id: Mapped[str] = mapped_column(Text, nullable=False)
+    encrypted_client_secret: Mapped[str] = mapped_column(Text, nullable=False)
+    redirect_uri: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
 class IntegrationAccount(Base, UUIDPrimaryKeyMixin, TimestampMixin):

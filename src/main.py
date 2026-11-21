@@ -62,6 +62,12 @@ async def coach_ui():
     return FileResponse(STATIC_DIR / "coach.html")
 
 
+@app.get("/config", tags=["Configuration"], response_class=FileResponse)
+async def config_ui():
+    """Serves the dedicated configuration and integrations setup interface."""
+    return FileResponse(STATIC_DIR / "config.html")
+
+
 @app.get("/", tags=["Root"], response_class=FileResponse)
 async def root_ui():
     """Default landing interface."""

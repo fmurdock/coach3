@@ -295,8 +295,15 @@
       <a href="/gym" class="nav-btn">Gym Mode</a>
       <a href="/dashboard" class="nav-btn active">Dashboard</a>
       <a href="/coach" class="nav-btn">AI Coach</a>
+      <a href="/config" class="nav-btn">Settings</a>
     </div>
   </header>
+
+  <!-- Empty State Guidance Banner -->
+  <div id="emptyNotice" style="display:none; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; font-size: 14px; justify-content: space-between; align-items: center;">
+    <span><strong>No workouts found:</strong> Connect Polar / Concept2 or load sample workouts in <a href="/config" style="color:var(--accent); text-decoration:underline;">Settings</a>.</span>
+    <a href="/config" style="background:#0284c7; color:#fff; text-decoration:none; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600;">Open Settings</a>
+  </div>
 
   <!-- Filter Pills -->
   <div class="filter-bar">
@@ -305,6 +312,9 @@
     <button class="filter-pill" data-window="90d">Last 90 Days</button>
     <button class="filter-pill" data-window="ytd">Year to Date</button>
     <button class="filter-pill" data-window="all">All Time</button>
+    <button id="btn-sync" class="filter-pill" style="margin-left:auto; display:flex; align-items:center; gap:6px; background:rgba(56, 189, 248, 0.1); border-color:var(--accent); color:var(--accent);" onclick="triggerManualSync()">
+      <span>🔄</span> Sync Now
+    </button>
   </div>
 
   <!-- KPI Summary Grid -->
@@ -384,6 +394,17 @@
     </div>
   </div>
 
+  <!-- Recent Workouts Feed -->
+  <div class="chart-card" style="margin-bottom: 24px;">
+    <div class="chart-header">
+      <h3 class="chart-title">Recent Workouts</h3>
+      <span style="font-size:12px; color:var(--text-muted);" id="recent-workouts-count"></span>
+    </div>
+    <div class="pr-list" id="recent-workouts-container">
+      <div class="empty-state">Loading recent workouts...</div>
+    </div>
+  </div>
+
   <script>
     let currentWindow = '30d';
     let weeklyChart = null;
@@ -402,16 +423,20 @@
 
     async function loadDashboardData(windowPreset) {
       try {
-        const [summaryRes, prsRes] = await Promise.all([
+        const [summaryRes, prsRes, workoutsRes] = await Promise.all([
           fetch(`/api/v1/analytics/summary?window=${windowPreset}`).then(r => r.json()),
-          fetch(`/api/v1/analytics/prs?window=${windowPreset}`).then(r => r.json())
+          fetch(`/api/v1/analytics/prs?window=${windowPreset}`).then(r => r.json()),
+          fetch('/api/v1/workouts?limit=15').then(r => r.json()).catch(() => [])
         ]);
 
         updateKPIs(summaryRes);
+        const isEmpty = (!summaryRes.cardio || summaryRes.cardio.total_duration_hours === 0) && (!summaryRes.strength || (summaryRes.strength.effective_working_sets || 0) === 0);
+        document.getElementById('emptyNotice').style.display = isEmpty ? 'flex' : 'none';
         renderWeeklyTrend(summaryRes.cardio);
         renderHRZoneDistribution(summaryRes.cardio);
         renderMuscleGroupSets(summaryRes.strength);
         renderPRShowcase(prsRes);
+        renderRecentWorkouts(workoutsRes);
       } catch (err) {
         console.error('Failed to load dashboard data:', err);
       }
@@ -421,14 +446,87 @@
       document.getElementById('kpi-duration').textContent = `${data.total_duration_hours || 0}h`;
       document.getElementById('kpi-zone2').textContent = `${data.zone2_duration_hours || 0}h`;
       document.getElementById('kpi-zone2-sub').textContent = `${data.zone2_percentage || 0}% of cardio`;
-      document.getElementById('kpi-run').textContent = `${data.total_cardio_distance_miles || 0} mi`;
+      
+      const runKm = data.cardio ? (data.cardio.outdoor_run_km || 0) : 0;
+      const runMi = (runKm * 0.621371).toFixed(1);
+      document.getElementById('kpi-run').textContent = `${runMi} mi`;
       
       const rowM = data.cardio ? data.cardio.erg_row_meters || 0 : 0;
       const bikeM = data.cardio ? data.cardio.erg_bike_meters || 0 : 0;
       document.getElementById('kpi-erg').textContent = `${(rowM + bikeM).toLocaleString()} m`;
 
       document.getElementById('kpi-volume').textContent = `${Math.round(data.total_strength_volume_lbs || 0).toLocaleString()} lbs`;
-      document.getElementById('kpi-sets').textContent = data.effective_working_sets || 0;
+      document.getElementById('kpi-sets').textContent = (data.strength ? data.strength.effective_working_sets : 0) || 0;
+    }
+
+    function renderRecentWorkouts(workouts) {
+      const container = document.getElementById('recent-workouts-container');
+      const countSpan = document.getElementById('recent-workouts-count');
+      if (!workouts || workouts.length === 0) {
+        container.innerHTML = '<div class="empty-state">No workouts recorded yet. Sync Polar or Concept2 in Settings!</div>';
+        if (countSpan) countSpan.textContent = '';
+        return;
+      }
+
+      if (countSpan) countSpan.textContent = `Showing latest ${workouts.length}`;
+
+      container.innerHTML = workouts.map(w => {
+        const dateStr = new Date(w.start_time_utc).toLocaleString([], {
+          month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+        });
+
+        // Provider styling
+        let provBadge = '';
+        if (w.provider === 'polar') {
+          provBadge = '<span class="recent-tag" style="border-color:#38bdf8; color:#38bdf8; background:rgba(56,189,248,0.15);">Polar</span>';
+        } else if (w.provider === 'concept2') {
+          provBadge = '<span class="recent-tag" style="border-color:#f59e0b; color:#f59e0b; background:rgba(245,158,11,0.15);">Concept2</span>';
+        } else {
+          provBadge = '<span class="recent-tag" style="border-color:#a855f7; color:#a855f7; background:rgba(168,85,247,0.15);">Gym</span>';
+        }
+
+        // Details string
+        const details = [];
+        if (w.total_distance_m > 0) {
+          if (w.discipline === 'outdoor_run') {
+            const km = (w.total_distance_m / 1000).toFixed(2);
+            const mi = (w.total_distance_m / 1609.34).toFixed(2);
+            details.push(`${km} km (${mi} mi)`);
+          } else {
+            details.push(`${Math.round(w.total_distance_m).toLocaleString()} m`);
+          }
+        }
+        if (w.total_duration_sec > 0) {
+          const m = Math.floor(w.total_duration_sec / 60);
+          const s = Math.floor(w.total_duration_sec % 60);
+          details.push(`${m}m ${s < 10 ? '0' : ''}${s}s`);
+        }
+        if (w.avg_heart_rate) {
+          details.push(`Avg HR: ${w.avg_heart_rate} bpm`);
+        }
+        if (w.zone2_duration_sec > 0) {
+          const z2m = Math.round(w.zone2_duration_sec / 60);
+          details.push(`Zone 2: ${z2m}m`);
+        }
+        if (w.avg_power_watts) {
+          details.push(`${Math.round(w.avg_power_watts)} W`);
+        }
+
+        return `
+          <div class="pr-item">
+            <div class="pr-info">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span class="pr-title">${w.title}</span>
+                ${provBadge}
+              </div>
+              <span class="pr-date" style="color:var(--text-muted); font-size:12px;">${dateStr}</span>
+            </div>
+            <div class="pr-badge-wrap" style="text-align:right;">
+              <span style="font-weight:700; color:var(--text); font-size:13px;">${details.join(' • ')}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
     }
 
     function renderWeeklyTrend(cardio) {
@@ -563,6 +661,44 @@
           </div>
         </div>
       `).join('');
+    }
+
+    async function triggerManualSync() {
+      const btn = document.getElementById('btn-sync');
+      const originalText = btn.innerHTML;
+      btn.innerHTML = '<span>⏳</span> Syncing...';
+      btn.disabled = true;
+
+      try {
+        const confRes = await fetch('/api/v1/config/integrations');
+        if (!confRes.ok) throw new Error('Could not fetch integration list');
+        const configs = await confRes.json();
+        const connected = configs.filter(c => c.is_connected);
+
+        if (connected.length === 0) {
+          alert('No connected providers found. Please connect Polar or Concept2 in Settings (/config).');
+          return;
+        }
+
+        let totalNew = 0;
+        let totalUpdated = 0;
+        for (const prov of connected) {
+          const syncRes = await fetch(`/api/v1/integrations/${prov.provider}/sync`, { method: 'POST' });
+          if (syncRes.ok) {
+            const log = await syncRes.json();
+            totalNew += (log.items_imported || 0);
+            totalUpdated += (log.items_updated || 0);
+          }
+        }
+
+        await loadDashboardData(currentWindow);
+        alert(`Sync complete! ${totalNew} new workouts imported, ${totalUpdated} updated.`);
+      } catch (err) {
+        alert('Sync error: ' + err.message);
+      } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+      }
     }
 
     // Initialize on page load

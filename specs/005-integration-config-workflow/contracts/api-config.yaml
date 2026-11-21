@@ -1,0 +1,221 @@
+openapi: 3.1.0
+info:
+  title: Coach3 Integration Configuration & Workflow API
+  version: 1.0.0
+  description: Endpoints for managing integration credentials, OAuth callbacks, diagnostic health checks, unified navigation, and demo data seeding.
+
+paths:
+  /api/v1/config/integrations:
+    get:
+      summary: Get integration credentials and status
+      description: Returns configuration status, masked client IDs, and connection status for Polar and Concept2.
+      responses:
+        '200':
+          description: List of provider configuration summaries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProviderConfigSummary'
+
+  /api/v1/config/integrations/{provider}:
+    post:
+      summary: Save or update provider client credentials
+      description: Encrypts and persists Client ID and Client Secret in database.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [polar, concept2]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveProviderCredentialsRequest'
+      responses:
+        '200':
+          description: Credentials saved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderConfigSummary'
+        '400':
+          description: Invalid provider or missing fields
+
+  /api/v1/integrations/{provider}/verify:
+    post:
+      summary: Verify provider connection health
+      description: Diagnostic test that pings provider API, auto-refreshes tokens, and reports connection health.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [polar, concept2]
+      responses:
+        '200':
+          description: Diagnostic result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationResult'
+        '400':
+          description: Provider unconfigured or invalid
+
+  /api/v1/integrations/{provider}/callback:
+    get:
+      summary: OAuth 2.0 authorization code callback
+      description: Handles provider redirect, exchanges code for tokens, and redirects browser to /config.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [polar, concept2]
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: error
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '307':
+          description: Redirects to /config with status query parameters
+
+  /api/v1/admin/demo/seed:
+    post:
+      summary: Seed sample workout data
+      description: Populates database with sample Polar runs, Concept2 rows/bikes, and gym workouts.
+      responses:
+        '201':
+          description: Sample workouts seeded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeedResult'
+
+  /api/v1/admin/demo:
+    delete:
+      summary: Reset and purge demo workout data
+      description: Deletes only sessions marked as is_demo=true without touching real athlete data.
+      responses:
+        '200':
+          description: Demo data purged successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResetResult'
+
+components:
+  schemas:
+    ProviderConfigSummary:
+      type: object
+      required:
+        - provider
+        - is_configured
+        - is_connected
+        - source
+      properties:
+        provider:
+          type: string
+          enum: [polar, concept2]
+        is_configured:
+          type: boolean
+        is_connected:
+          type: boolean
+        masked_client_id:
+          type: string
+          nullable: true
+        source:
+          type: string
+          enum: [database, env, none]
+        account_id:
+          type: string
+          nullable: true
+        last_sync_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    SaveProviderCredentialsRequest:
+      type: object
+      required:
+        - client_id
+        - client_secret
+      properties:
+        client_id:
+          type: string
+        client_secret:
+          type: string
+        redirect_uri:
+          type: string
+          nullable: true
+
+    VerificationResult:
+      type: object
+      required:
+        - provider
+        - is_connected
+        - status
+      properties:
+        provider:
+          type: string
+        is_connected:
+          type: boolean
+        status:
+          type: string
+          enum: [healthy, expired, error, unconfigured]
+        athlete_name:
+          type: string
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_sync_at:
+          type: string
+          format: date-time
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+
+    SeedResult:
+      type: object
+      required:
+        - status
+        - workouts_created
+        - strength_sets_created
+      properties:
+        status:
+          type: string
+        workouts_created:
+          type: integer
+        strength_sets_created:
+          type: integer
+
+    ResetResult:
+      type: object
+      required:
+        - status
+        - workouts_deleted
+      properties:
+        status:
+          type: string
+        workouts_deleted:
+          type: integer

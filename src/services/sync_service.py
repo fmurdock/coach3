@@ -44,10 +44,29 @@ async def run_sync_for_account(
     await db.flush()
 
     try:
-        # Load user HR profile for local zone math
+        # Load user HR profile for local zone math (auto-create default if missing)
         q_prof = select(UserHeartRateProfile).where(UserHeartRateProfile.user_id == account.user_id)
         res_prof = await db.execute(q_prof)
         hr_profile = res_prof.scalar_one_or_none()
+        if not hr_profile:
+            hr_profile = UserHeartRateProfile(
+                id=uuid.uuid4(),
+                user_id=account.user_id,
+                resting_hr=50,
+                max_hr=190,
+                zone1_min=95,
+                zone1_max=114,
+                zone2_min=114,
+                zone2_max=133,
+                zone3_min=133,
+                zone3_max=152,
+                zone4_min=152,
+                zone4_max=171,
+                zone5_min=171,
+                zone5_max=190,
+            )
+            db.add(hr_profile)
+            await db.flush()
 
         adapter = get_adapter_for_provider(account.provider)
         token = decrypt_token(account.encrypted_access_token)
@@ -60,9 +79,13 @@ async def run_sync_for_account(
         if mock_batch is not None:
             workouts_to_process = mock_batch
         else:
+            cursor = dict(account.sync_cursor or {})
+            if account.provider == "polar" and account.account_id and "user_id" not in cursor:
+                cursor["user_id"] = account.account_id
+
             batch_result = await adapter.fetch_workouts_batch(
                 access_token=token,
-                cursor=account.sync_cursor,
+                cursor=cursor,
                 since=account.last_sync_at,
             )
             workouts_to_process = batch_result.workouts

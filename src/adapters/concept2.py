@@ -38,8 +38,7 @@ class Concept2Adapter(BaseIngestionAdapter):
             "scope": "user:read,results:read",
             "state": state,
         }
-        query = "&".join(f"{k}={httpx.URL('', params={k: v}).query.decode()}" for k, v in params.items())
-        return f"{self.AUTH_URL}?{query}"
+        return str(httpx.URL(self.AUTH_URL, params=params))
 
     async def exchange_code(self, code: str) -> dict[str, Any]:
         data = {
@@ -65,6 +64,46 @@ class Concept2Adapter(BaseIngestionAdapter):
             resp = await client.post(self.TOKEN_URL, data=data)
             resp.raise_for_status()
             return resp.json()
+
+    async def verify_connection(self, access_token: str) -> dict[str, Any]:
+        """Tests connectivity to Concept2 Logbook API using the stored access token."""
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{self.BASE_URL}/users/me", headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json().get("data", {})
+                    username = data.get("username") or data.get("first_name", "Concept2 User")
+                    return {
+                        "is_connected": True,
+                        "status": "healthy",
+                        "athlete_name": username,
+                        "error": None,
+                    }
+                elif resp.status_code == 401:
+                    return {
+                        "is_connected": False,
+                        "status": "expired",
+                        "athlete_name": None,
+                        "error": "Access token expired or revoked.",
+                    }
+                else:
+                    return {
+                        "is_connected": False,
+                        "status": "error",
+                        "athlete_name": None,
+                        "error": f"Concept2 API error: HTTP {resp.status_code}",
+                    }
+        except Exception as exc:
+            return {
+                "is_connected": False,
+                "status": "error",
+                "athlete_name": None,
+                "error": str(exc),
+            }
 
     def normalize_concept2_workout(self, raw_data: dict[str, Any]) -> NormalizedWorkout:
         """Map raw Concept2 Logbook workout JSON to canonical NormalizedWorkout entity."""
