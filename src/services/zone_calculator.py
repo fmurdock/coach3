@@ -47,15 +47,17 @@ def calculate_zone_durations(
 
         bpm = curr_sample.bpm
 
-        if hr_profile.zone1_min <= bpm < hr_profile.zone1_max:
-            durations.zone1_sec += effective_delta
-        elif hr_profile.zone2_min <= bpm < hr_profile.zone2_max:
-            durations.zone2_sec += effective_delta
-        elif hr_profile.zone3_min <= bpm < hr_profile.zone3_max:
-            durations.zone3_sec += effective_delta
-        elif hr_profile.zone4_min <= bpm < hr_profile.zone4_max:
-            durations.zone4_sec += effective_delta
-        elif bpm >= hr_profile.zone5_min:
+        # Top-down classification guarantees zero dropped boundary BPM samples
+        # for both contiguous (zoneX_max == zone(X+1)_min) and inclusive (zoneX_max < zone(X+1)_min) bounds.
+        if bpm >= hr_profile.zone5_min:
             durations.zone5_sec += effective_delta
+        elif bpm >= hr_profile.zone4_min:
+            durations.zone4_sec += effective_delta
+        elif bpm >= hr_profile.zone3_min:
+            durations.zone3_sec += effective_delta
+        elif bpm >= hr_profile.zone2_min:
+            durations.zone2_sec += effective_delta
+        elif bpm >= hr_profile.zone1_min:
+            durations.zone1_sec += effective_delta
 
     return durations

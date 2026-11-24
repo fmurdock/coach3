@@ -11,6 +11,7 @@ from src.core.database import get_db
 from src.models.user import User
 from src.schemas.analytics import (
     CardioAnalyticsResponse,
+    DashboardMacroResponse,
     PersonalRecordItem,
     StrengthAnalyticsResponse,
     UnifiedVolumeSummary,
@@ -22,6 +23,19 @@ from src.services.pr_detector import PRDetectorService
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
 analytics_service = AnalyticsService()
 pr_detector = PRDetectorService()
+
+
+@router.get("/dashboard", response_model=DashboardMacroResponse)
+async def get_dashboard_macro(
+    window: Optional[WindowPreset] = Query(default=WindowPreset.THIRTY_DAYS),
+    start_date: Optional[date] = Query(default=None),
+    end_date: Optional[date] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve unified macro training volume: Cardio (Zone 2 vs Zone 5 VO2 max) and Resistance muscle group sets with top weights."""
+    user = await get_or_create_default_user(db)
+    start_dt, end_dt = analytics_service.resolve_date_window(window, start_date, end_date)
+    return await analytics_service.get_macro_dashboard_volume(db, user.id, start_dt, end_dt)
 
 
 async def get_or_create_default_user(db: AsyncSession) -> User:

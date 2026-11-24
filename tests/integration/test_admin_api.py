@@ -18,13 +18,13 @@ async def test_admin_demo_seed_and_reset(db_session: AsyncSession):
         assert resp_seed.status_code == 201
         data_seed = resp_seed.json()
         assert data_seed["status"] == "success"
-        assert data_seed["workouts_created"] == 5
+        assert data_seed["workouts_created"] == 6
 
         # 2. Trigger Reset
         resp_reset = await client.delete("/api/v1/admin/demo")
         assert resp_reset.status_code == 200
         data_reset = resp_reset.json()
         assert data_reset["status"] == "success"
-        assert data_reset["workouts_deleted"] == 5
+        assert data_reset["workouts_deleted"] == 6
 
     app.dependency_overrides.pop(get_db, None)

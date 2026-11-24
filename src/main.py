@@ -44,34 +44,37 @@ if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+NO_CACHE_HEADERS = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
+
 @app.get("/dashboard", tags=["Dashboard"], response_class=FileResponse)
 async def dashboard_ui():
     """Serves the interactive training volume and peak performance dashboard."""
-    return FileResponse(STATIC_DIR / "dashboard.html")
+    return FileResponse(STATIC_DIR / "dashboard.html", headers=NO_CACHE_HEADERS)
 
 
 @app.get("/gym", tags=["Gym Mode"], response_class=FileResponse)
 async def gym_ui():
     """Serves the mobile-optimized Gym Mode voice logger interface."""
-    return FileResponse(STATIC_DIR / "gym.html")
+    return FileResponse(STATIC_DIR / "gym.html", headers=NO_CACHE_HEADERS)
 
 
 @app.get("/coach", tags=["AI Coach"], response_class=FileResponse)
 async def coach_ui():
     """Serves the interactive adaptive AI coaching interface."""
-    return FileResponse(STATIC_DIR / "coach.html")
+    return FileResponse(STATIC_DIR / "coach.html", headers=NO_CACHE_HEADERS)
 
 
 @app.get("/config", tags=["Configuration"], response_class=FileResponse)
 async def config_ui():
     """Serves the dedicated configuration and integrations setup interface."""
-    return FileResponse(STATIC_DIR / "config.html")
+    return FileResponse(STATIC_DIR / "config.html", headers=NO_CACHE_HEADERS)
 
 
 @app.get("/", tags=["Root"], response_class=FileResponse)
 async def root_ui():
     """Default landing interface."""
-    return FileResponse(STATIC_DIR / "gym.html")
+    return FileResponse(STATIC_DIR / "gym.html", headers=NO_CACHE_HEADERS)
 
 
 @app.get("/health", tags=["Health"])

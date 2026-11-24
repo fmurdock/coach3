@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 import uuid
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.base import NormalizedWorkout
@@ -10,6 +10,51 @@ from src.models.telemetry import GPSRoutePoint, HeartRateSample, WorkoutSplit
 from src.models.user import UserHeartRateProfile
 from src.models.workout import WorkoutSession
 from src.services.zone_calculator import calculate_zone_durations
+
+
+def _add_hr_samples(session: AsyncSession, workout_id: uuid.UUID, normalized: NormalizedWorkout) -> None:
+    for sample in normalized.heart_rate_samples:
+        session.add(
+            HeartRateSample(
+                workout_id=workout_id,
+                timestamp_utc=normalized.start_time_utc + timedelta(seconds=sample.elapsed_sec),
+                elapsed_sec=sample.elapsed_sec,
+                bpm=sample.bpm,
+            )
+        )
+
+
+def _add_gps_points(session: AsyncSession, workout_id: uuid.UUID, normalized: NormalizedWorkout) -> None:
+    for pt in normalized.gps_route_points:
+        session.add(
+            GPSRoutePoint(
+                workout_id=workout_id,
+                timestamp_utc=normalized.start_time_utc + timedelta(seconds=pt.elapsed_sec),
+                elapsed_sec=pt.elapsed_sec,
+                latitude=pt.latitude,
+                longitude=pt.longitude,
+                altitude_m=pt.altitude_m,
+            )
+        )
+
+
+def _add_splits(session: AsyncSession, workout_id: uuid.UUID, normalized: NormalizedWorkout) -> None:
+    for sp in normalized.splits:
+        session.add(
+            WorkoutSplit(
+                id=uuid.uuid4(),
+                workout_id=workout_id,
+                split_index=sp.split_index,
+                split_type=sp.split_type,
+                distance_m=sp.distance_m,
+                duration_sec=sp.duration_sec,
+                avg_pace_sec_per_km=sp.avg_pace_sec_per_km,
+                avg_power_watts=sp.avg_power_watts,
+                avg_cadence_spm=sp.avg_cadence_spm,
+                avg_heart_rate=sp.avg_heart_rate,
+                avg_split_sec_per_500m=sp.avg_split_sec_per_500m,
+            )
+        )
 
 
 async def ingest_workout(
@@ -37,6 +82,8 @@ async def ingest_workout(
     if existing_workout:
         # Soft-sync update: update telemetry & metrics, preserve user notes
         existing_workout.title = normalized.title
+        existing_workout.start_time_utc = normalized.start_time_utc
+        existing_workout.local_timezone = normalized.local_timezone
         existing_workout.total_duration_sec = normalized.total_duration_sec
         existing_workout.active_duration_sec = normalized.active_duration_sec
         existing_workout.total_distance_m = normalized.total_distance_m
@@ -57,6 +104,20 @@ async def ingest_workout(
         existing_workout.avg_split_sec_per_500m = normalized.avg_split_sec_per_500m
         existing_workout.avg_drag_factor = normalized.avg_drag_factor
         existing_workout.raw_summary = normalized.raw_summary
+
+        # Replace telemetry streams cleanly when fresh non-empty streams arrive
+        if normalized.heart_rate_samples:
+            await session.execute(delete(HeartRateSample).where(HeartRateSample.workout_id == existing_workout.id))
+            _add_hr_samples(session, existing_workout.id, normalized)
+
+        if normalized.gps_route_points:
+            await session.execute(delete(GPSRoutePoint).where(GPSRoutePoint.workout_id == existing_workout.id))
+            _add_gps_points(session, existing_workout.id, normalized)
+
+        if normalized.splits:
+            await session.execute(delete(WorkoutSplit).where(WorkoutSplit.workout_id == existing_workout.id))
+            _add_splits(session, existing_workout.id, normalized)
+
         return existing_workout, False
 
     # 3. Create new WorkoutSession
@@ -94,43 +155,9 @@ async def ingest_workout(
     )
     session.add(workout)
 
-    # 4. Attach HeartRateSamples
-    for sample in normalized.heart_rate_samples:
-        hr_record = HeartRateSample(
-            workout_id=workout_id,
-            timestamp_utc=normalized.start_time_utc + timedelta(seconds=sample.elapsed_sec),
-            elapsed_sec=sample.elapsed_sec,
-            bpm=sample.bpm,
-        )
-        session.add(hr_record)
-
-    # 5. Attach GPSRoutePoints
-    for pt in normalized.gps_route_points:
-        gps_record = GPSRoutePoint(
-            workout_id=workout_id,
-            timestamp_utc=normalized.start_time_utc + timedelta(seconds=pt.elapsed_sec),
-            elapsed_sec=pt.elapsed_sec,
-            latitude=pt.latitude,
-            longitude=pt.longitude,
-            altitude_m=pt.altitude_m,
-        )
-        session.add(gps_record)
-
-    # 6. Attach Splits
-    for sp in normalized.splits:
-        split_record = WorkoutSplit(
-            id=uuid.uuid4(),
-            workout_id=workout_id,
-            split_index=sp.split_index,
-            split_type=sp.split_type,
-            distance_m=sp.distance_m,
-            duration_sec=sp.duration_sec,
-            avg_pace_sec_per_km=sp.avg_pace_sec_per_km,
-            avg_power_watts=sp.avg_power_watts,
-            avg_cadence_spm=sp.avg_cadence_spm,
-            avg_heart_rate=sp.avg_heart_rate,
-            avg_split_sec_per_500m=sp.avg_split_sec_per_500m,
-        )
-        session.add(split_record)
+    # 4-6. Attach telemetry streams (HeartRateSamples, GPSRoutePoints, Splits)
+    _add_hr_samples(session, workout_id, normalized)
+    _add_gps_points(session, workout_id, normalized)
+    _add_splits(session, workout_id, normalized)
 
     return workout, True

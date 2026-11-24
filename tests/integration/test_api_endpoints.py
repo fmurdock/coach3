@@ -64,7 +64,8 @@ async def test_profile_heart_rate_endpoints(db_session: AsyncSession):
         assert get_res.status_code == 200
         profile_data = get_res.json()
         assert "id" in profile_data
-        assert profile_data["zone2_min"] == 114
+        assert profile_data["max_hr"] == 185
+        assert profile_data["zone2_min"] == 111
 
         # PUT updated profile
         update_payload = {

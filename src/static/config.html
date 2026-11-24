@@ -481,6 +481,58 @@
       <div id="aiDiag" style="margin-top:14px; font-size:13px; color:var(--text-muted); display:none;"></div>
     </div>
 
+    <!-- Heart Rate Zones Profile Card -->
+    <div class="card" id="hrProfileCard">
+      <div class="card-header">
+        <div class="card-title">
+          ❤️ Heart Rate Zones Profile
+        </div>
+        <span class="badge" id="hrZoneBadge">Configured</span>
+      </div>
+      <p style="font-size:13px; color:var(--text-muted); margin-bottom:14px;">
+        Configure your Max Heart Rate (defaults to <strong>185 bpm</strong> for new profiles) and Zone 1–5 thresholds. Saving automatically recalculates Zone 1–5 durations across your entire workout history.
+      </p>
+
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap:12px; margin-bottom:14px;">
+        <div class="form-group" style="margin:0;">
+          <label for="hrResting">Resting HR (bpm)</label>
+          <input type="number" id="hrResting" min="31" max="120" value="50">
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label for="hrMax">Max HR (bpm)</label>
+          <input type="number" id="hrMax" min="100" max="239" value="185">
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap:10px; margin-bottom:14px;">
+        <div class="form-group" style="margin:0;">
+          <label>Zone 1 (Min / Max)</label>
+          <div style="display:flex; gap:6px;"><input type="number" id="z1Min"><input type="number" id="z1Max"></div>
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label>Zone 2 (Min / Max)</label>
+          <div style="display:flex; gap:6px;"><input type="number" id="z2Min"><input type="number" id="z2Max"></div>
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label>Zone 3 (Min / Max)</label>
+          <div style="display:flex; gap:6px;"><input type="number" id="z3Min"><input type="number" id="z3Max"></div>
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label>Zone 4 (Min / Max)</label>
+          <div style="display:flex; gap:6px;"><input type="number" id="z4Min"><input type="number" id="z4Max"></div>
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label>Zone 5 (Min / Max)</label>
+          <div style="display:flex; gap:6px;"><input type="number" id="z5Min"><input type="number" id="z5Max"></div>
+        </div>
+      </div>
+
+      <div class="actions-row">
+        <button class="btn-primary" onclick="saveHrProfile()">Save &amp; Recalculate Zones</button>
+        <button class="btn-secondary" onclick="applyMaxHrPercentDefaults()">Calculate Default % from Max HR</button>
+      </div>
+    </div>
+
     <!-- Demo Data & Testing Tools Card -->
     <div class="card" id="demoCard">
       <div class="card-header">
@@ -770,9 +822,72 @@
       }
     }
 
+    async function loadHrProfile() {
+      try {
+        const res = await fetch("/api/v1/profile/heart-rate");
+        if (!res.ok) return;
+        const p = await res.json();
+        document.getElementById("hrResting").value = p.resting_hr;
+        document.getElementById("hrMax").value = p.max_hr;
+        document.getElementById("z1Min").value = p.zone1_min;
+        document.getElementById("z1Max").value = p.zone1_max;
+        document.getElementById("z2Min").value = p.zone2_min;
+        document.getElementById("z2Max").value = p.zone2_max;
+        document.getElementById("z3Min").value = p.zone3_min;
+        document.getElementById("z3Max").value = p.zone3_max;
+        document.getElementById("z4Min").value = p.zone4_min;
+        document.getElementById("z4Max").value = p.zone4_max;
+        document.getElementById("z5Min").value = p.zone5_min;
+        document.getElementById("z5Max").value = p.zone5_max;
+      } catch (e) {}
+    }
+
+    function applyMaxHrPercentDefaults() {
+      const m = parseInt(document.getElementById("hrMax").value, 10) || 185;
+      document.getElementById("z1Min").value = Math.round(m * 0.50);
+      document.getElementById("z1Max").value = Math.round(m * 0.60);
+      document.getElementById("z2Min").value = Math.round(m * 0.60);
+      document.getElementById("z2Max").value = Math.round(m * 0.70);
+      document.getElementById("z3Min").value = Math.round(m * 0.70);
+      document.getElementById("z3Max").value = Math.round(m * 0.80);
+      document.getElementById("z4Min").value = Math.round(m * 0.80);
+      document.getElementById("z4Max").value = Math.round(m * 0.90);
+      document.getElementById("z5Min").value = Math.round(m * 0.90);
+      document.getElementById("z5Max").value = m;
+    }
+
+    async function saveHrProfile() {
+      const payload = {
+        resting_hr: parseInt(document.getElementById("hrResting").value, 10),
+        max_hr: parseInt(document.getElementById("hrMax").value, 10),
+        zone1_min: parseInt(document.getElementById("z1Min").value, 10),
+        zone1_max: parseInt(document.getElementById("z1Max").value, 10),
+        zone2_min: parseInt(document.getElementById("z2Min").value, 10),
+        zone2_max: parseInt(document.getElementById("z2Max").value, 10),
+        zone3_min: parseInt(document.getElementById("z3Min").value, 10),
+        zone3_max: parseInt(document.getElementById("z3Max").value, 10),
+        zone4_min: parseInt(document.getElementById("z4Min").value, 10),
+        zone4_max: parseInt(document.getElementById("z4Max").value, 10),
+        zone5_min: parseInt(document.getElementById("z5Min").value, 10),
+        zone5_max: parseInt(document.getElementById("z5Max").value, 10),
+      };
+      try {
+        const res = await fetch("/api/v1/profile/heart-rate", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        showToast("Heart rate zones saved & workout history recalculated!", "success");
+      } catch (err) {
+        showToast("Failed to save HR profile: " + err.message, "error");
+      }
+    }
+
     // Initialize
     checkQueryParams();
     loadConfigs();
+    loadHrProfile();
   </script>
 </body>
 </html>

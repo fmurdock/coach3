@@ -8,9 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.adapters.base import BaseIngestionAdapter, NormalizedWorkout
 from src.adapters.concept2 import Concept2Adapter
 from src.adapters.polar import PolarAdapter
-from src.core.security import decrypt_token
+from src.core.security import decrypt_token, encrypt_token
 from src.models.integration import IntegrationAccount, SyncAuditLog
 from src.models.user import UserHeartRateProfile
+from src.services.config_service import ConfigService
 from src.services.ingestion import ingest_workout
 
 
@@ -68,7 +69,14 @@ async def run_sync_for_account(
             db.add(hr_profile)
             await db.flush()
 
-        adapter = get_adapter_for_provider(account.provider)
+        cid, csec, redir, _ = await ConfigService.get_provider_credentials(db, account.provider)
+        if account.provider == "polar":
+            adapter = PolarAdapter(client_id=cid, client_secret=csec, redirect_uri=redir)
+        elif account.provider == "concept2":
+            adapter = Concept2Adapter(client_id=cid, client_secret=csec, redirect_uri=redir)
+        else:
+            adapter = get_adapter_for_provider(account.provider)
+
         token = decrypt_token(account.encrypted_access_token)
 
         imported_count = 0
@@ -83,11 +91,33 @@ async def run_sync_for_account(
             if account.provider == "polar" and account.account_id and "user_id" not in cursor:
                 cursor["user_id"] = account.account_id
 
-            batch_result = await adapter.fetch_workouts_batch(
-                access_token=token,
-                cursor=cursor,
-                since=account.last_sync_at,
-            )
+            try:
+                batch_result = await adapter.fetch_workouts_batch(
+                    access_token=token,
+                    cursor=cursor,
+                    since=account.last_sync_at,
+                )
+            except Exception as sync_err:
+                # If failed and refresh token available, attempt refresh and retry
+                if account.encrypted_refresh_token:
+                    refresh_tok = decrypt_token(account.encrypted_refresh_token)
+                    new_tokens = await adapter.refresh_access_token(refresh_tok)
+                    if "access_token" in new_tokens:
+                        token = new_tokens["access_token"]
+                        account.encrypted_access_token = encrypt_token(token)
+                        if "refresh_token" in new_tokens:
+                            account.encrypted_refresh_token = encrypt_token(new_tokens["refresh_token"])
+                        await db.flush()
+                        batch_result = await adapter.fetch_workouts_batch(
+                            access_token=token,
+                            cursor=cursor,
+                            since=account.last_sync_at,
+                        )
+                    else:
+                        raise sync_err
+                else:
+                    raise sync_err
+
             workouts_to_process = batch_result.workouts
             if batch_result.next_cursor:
                 account.sync_cursor = batch_result.next_cursor

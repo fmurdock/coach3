@@ -12,14 +12,20 @@ from src.services.seed_service import SeedService
 async def test_seed_and_purge_demo_workouts(db_session: AsyncSession):
     # 1. Seed demo workouts
     w_count, s_count = await SeedService.seed_sample_workouts(db_session)
-    assert w_count == 5
+    assert w_count == 6
     assert s_count == 7
 
     # Verify workouts created with is_demo=True
     q = select(WorkoutSession).where(WorkoutSession.is_demo == True)
     res = await db_session.execute(q)
     demos = res.scalars().all()
-    assert len(demos) == 5
+    assert len(demos) == 6
+
+    # Verify interval workout was seeded with splits
+    interval_rows = [w for w in demos if "Interval" in w.title]
+    assert len(interval_rows) == 1
+    assert interval_rows[0].discipline == "indoor_row"
+    assert interval_rows[0].zone5_duration_sec == 400.0
 
     # 2. Add an authentic user workout (is_demo=False)
     user = await SeedService.ensure_default_athlete_and_philosophy(db_session)
@@ -44,7 +50,7 @@ async def test_seed_and_purge_demo_workouts(db_session: AsyncSession):
 
     # 3. Purge demo data
     deleted = await SeedService.purge_demo_data(db_session)
-    assert deleted == 5
+    assert deleted == 6
 
     # 4. Verify authentic workout was preserved
     q_real = select(WorkoutSession).where(WorkoutSession.is_demo == False)

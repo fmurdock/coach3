@@ -1,0 +1,532 @@
+openapi: 3.1.0
+info:
+  title: Coach3 Revamped Dashboard API
+  version: 2.0.0
+  description: Endpoints powering the revamped Coach3 Training Dashboard, weekly cardio/strength goals, workout drill-downs, GPX route attachment, and HR zone calibration.
+paths:
+  /api/v1/analytics/dashboard:
+    get:
+      summary: Retrieve unified macro training volume metrics and goal targets
+      description: Returns Zone 2 base minutes (vs 120 min/wk goal), VO2 Max Zone 5 minutes (vs 20 min/wk suggested goal), and Push/Pull/Legs/Abs working set volume (vs 10 sets/wk goal each).
+      parameters:
+        - name: window
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [7d, 30d, 90d, ytd, all]
+            default: 30d
+        - name: start_date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Successful macro volume response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardMacroResponse'
+
+  /api/v1/workouts:
+    get:
+      summary: List recent workouts with highlight metrics
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+        - name: discipline
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [outdoor_run, indoor_row, erg_bike, strength]
+        - name: start_date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: List of workout rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkoutTableRow'
+
+  /api/v1/workouts/{workout_id}/detail:
+    get:
+      summary: Get detailed workout telemetry, notes, strength sets, route track, and interval analysis
+      parameters:
+        - name: workout_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Detailed workout telemetry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutDetailTelemetry'
+        '404':
+          description: Workout not found
+
+  /api/v1/workouts/{workout_id}/gpx:
+    post:
+      summary: Attach or replace GPS route coordinates from GPX XML on an existing workout
+      parameters:
+        - name: workout_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [gpx_xml]
+              properties:
+                gpx_xml:
+                  type: string
+      responses:
+        '200':
+          description: Updated workout detail telemetry with attached route points
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutDetailTelemetry'
+        '400':
+          description: Invalid GPX payload
+        '404':
+          description: Workout not found
+
+  /api/v1/profile/heart-rate:
+    get:
+      summary: Retrieve user Resting HR, Max HR, and Zone 1-5 thresholds
+      responses:
+        '200':
+          description: Active heart rate profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeartRateProfileResponse'
+    put:
+      summary: Update heart rate thresholds and recalculate historical workout HR zones
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HeartRateProfileRequest'
+      responses:
+        '200':
+          description: Updated heart rate profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeartRateProfileResponse'
+
+components:
+  schemas:
+    DashboardMacroResponse:
+      type: object
+      required: [cardio, resistance]
+      properties:
+        cardio:
+          $ref: '#/components/schemas/CardioVolumeSummary'
+        resistance:
+          type: array
+          items:
+            $ref: '#/components/schemas/MuscleGroupVolumeSummary'
+
+    CardioVolumeSummary:
+      type: object
+      required:
+        - total_cardio_minutes
+        - zone2_minutes
+        - zone5_minutes
+        - zone2_percentage
+        - zone2_weekly_goal_minutes
+        - vo2max_weekly_goal_minutes
+      properties:
+        total_cardio_minutes:
+          type: number
+        zone2_minutes:
+          type: number
+        zone4_minutes:
+          type: number
+          default: 0.0
+        zone5_minutes:
+          type: number
+        zone2_percentage:
+          type: number
+        zone5_percentage:
+          type: number
+        zone2_weekly_goal_minutes:
+          type: number
+          default: 120.0
+        vo2max_weekly_goal_minutes:
+          type: number
+          default: 20.0
+        zone2_avg_weekly_minutes:
+          type: number
+        zone4_avg_weekly_minutes:
+          type: number
+          default: 0.0
+        vo2max_avg_weekly_minutes:
+          type: number
+        weekly_trend:
+          type: array
+          items:
+            type: object
+            properties:
+              week_label:
+                type: string
+              miles:
+                type: number
+              zone2_hours:
+                type: number
+              zone2_minutes:
+                type: number
+              zone4_minutes:
+                type: number
+              zone5_minutes:
+                type: number
+
+    MuscleGroupVolumeSummary:
+      type: object
+      required:
+        - muscle_group
+        - display_name
+        - working_sets
+        - total_reps
+      properties:
+        muscle_group:
+          type: string
+          enum: [push, pull, legs, abs, other]
+        display_name:
+          type: string
+        working_sets:
+          type: integer
+        weekly_avg_sets:
+          type: number
+        weekly_goal_sets:
+          type: number
+          default: 10.0
+        goal_progress_pct:
+          type: number
+        total_reps:
+          type: integer
+        top_exercise_name:
+          type: string
+          nullable: true
+        top_weight_lbs:
+          type: number
+          nullable: true
+        top_reps:
+          type: integer
+          nullable: true
+        estimated_1rm_lbs:
+          type: number
+          nullable: true
+
+    WorkoutTableRow:
+      type: object
+      required:
+        - id
+        - discipline
+        - title
+        - start_time_utc
+        - duration_sec
+        - primary_metric_label
+        - has_telemetry
+        - is_interval_workout
+      properties:
+        id:
+          type: string
+          format: uuid
+        discipline:
+          type: string
+        title:
+          type: string
+        start_time_utc:
+          type: string
+          format: date-time
+        duration_sec:
+          type: number
+        distance_m:
+          type: number
+          nullable: true
+        avg_heart_rate:
+          type: integer
+          nullable: true
+        max_heart_rate:
+          type: integer
+          nullable: true
+        primary_metric_label:
+          type: string
+        has_telemetry:
+          type: boolean
+        is_interval_workout:
+          type: boolean
+
+    StrengthSetDetail:
+      type: object
+      required: [exercise_name, category, set_index, reps_completed, weight_lbs]
+      properties:
+        exercise_name:
+          type: string
+        category:
+          type: string
+        set_index:
+          type: integer
+        reps_completed:
+          type: integer
+        weight_lbs:
+          type: number
+        is_bodyweight:
+          type: boolean
+        added_weight_lbs:
+          type: number
+          nullable: true
+        rpe:
+          type: number
+          nullable: true
+        is_warmup:
+          type: boolean
+
+    GPSRoutePointSchema:
+      type: object
+      required: [elapsed_sec, latitude, longitude]
+      properties:
+        elapsed_sec:
+          type: number
+        latitude:
+          type: number
+        longitude:
+          type: number
+        altitude_m:
+          type: number
+          nullable: true
+
+    WorkoutDetailTelemetry:
+      type: object
+      required: [workout_id, time_series, splits]
+      properties:
+        workout_id:
+          type: string
+          format: uuid
+        discipline:
+          type: string
+          nullable: true
+        title:
+          type: string
+          nullable: true
+        user_notes:
+          type: string
+          nullable: true
+        total_duration_sec:
+          type: number
+          nullable: true
+        total_distance_m:
+          type: number
+          nullable: true
+        total_calories:
+          type: integer
+          nullable: true
+        avg_heart_rate:
+          type: integer
+          nullable: true
+        max_heart_rate:
+          type: integer
+          nullable: true
+        avg_pace_sec_per_km:
+          type: number
+          nullable: true
+        elevation_gain_m:
+          type: number
+          nullable: true
+        elevation_loss_m:
+          type: number
+          nullable: true
+        rest_distance_m:
+          type: number
+          nullable: true
+        hr_zone_seconds:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: number
+        time_series:
+          type: array
+          items:
+            type: object
+            required: [elapsed_sec]
+            properties:
+              elapsed_sec:
+                type: number
+              heart_rate:
+                type: integer
+                nullable: true
+              pace_sec:
+                type: number
+                nullable: true
+              power_watts:
+                type: number
+                nullable: true
+              cadence_spm:
+                type: number
+                nullable: true
+        splits:
+          type: array
+          items:
+            type: object
+            properties:
+              split_index:
+                type: integer
+              split_type:
+                type: string
+              duration_sec:
+                type: number
+              distance_m:
+                type: number
+              avg_heart_rate:
+                type: integer
+                nullable: true
+              ending_heart_rate:
+                type: integer
+                nullable: true
+              peak_heart_rate:
+                type: integer
+                nullable: true
+              avg_pace_sec:
+                type: number
+                nullable: true
+              avg_power_watts:
+                type: number
+                nullable: true
+              avg_cadence_spm:
+                type: number
+                nullable: true
+              samples:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    set_elapsed_sec:
+                      type: number
+                    heart_rate:
+                      type: integer
+                      nullable: true
+                    pace_sec:
+                      type: number
+                      nullable: true
+                    cadence_spm:
+                      type: number
+                      nullable: true
+        strength_sets:
+          type: array
+          items:
+            $ref: '#/components/schemas/StrengthSetDetail'
+        route_points:
+          type: array
+          items:
+            $ref: '#/components/schemas/GPSRoutePointSchema'
+        interval_consistency:
+          type: object
+          nullable: true
+          properties:
+            is_consistent:
+              type: boolean
+            pace_variance_pct:
+              type: number
+            superimposed_curves:
+              type: array
+              items:
+                type: object
+                properties:
+                  set_index:
+                    type: integer
+                  points:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        set_elapsed_sec:
+                          type: number
+                        heart_rate:
+                          type: integer
+                          nullable: true
+                        pace_sec:
+                          type: number
+                          nullable: true
+                        cadence_spm:
+                          type: number
+                          nullable: true
+
+    HeartRateProfileRequest:
+      type: object
+      required:
+        - resting_hr
+        - max_hr
+        - zone1_min
+        - zone1_max
+        - zone2_min
+        - zone2_max
+        - zone3_min
+        - zone3_max
+        - zone4_min
+        - zone4_max
+        - zone5_min
+        - zone5_max
+      properties:
+        resting_hr: { type: integer, default: 50 }
+        max_hr: { type: integer, default: 185, description: "Configurable athlete max heart rate (defaults to 185 bpm for new profiles, never hardcoded in analytics)" }
+        zone1_min: { type: integer, default: 93 }
+        zone1_max: { type: integer, default: 111 }
+        zone2_min: { type: integer, default: 111 }
+        zone2_max: { type: integer, default: 130 }
+        zone3_min: { type: integer, default: 130 }
+        zone3_max: { type: integer, default: 148 }
+        zone4_min: { type: integer, default: 148 }
+        zone4_max: { type: integer, default: 167 }
+        zone5_min: { type: integer, default: 167 }
+        zone5_max: { type: integer, default: 185 }
+
+    HeartRateProfileResponse:
+      allOf:
+        - $ref: '#/components/schemas/HeartRateProfileRequest'
+        - type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            user_id:
+              type: string
+              format: uuid

@@ -42,7 +42,7 @@ flowchart LR
 ```
 
 1. **🎙️ Gym Voice Logging (`/gym`)**: Mobile-optimized voice logging for strength workouts. Spoken sets, reps, load, and RPE are transcribed and parsed into structured sets with one-tap editing.
-2. **📊 Training Volume & PR Dashboard (`/dashboard`)**: Normalized cardiovascular analytics (Zone 2 hours, weekly mileage, heart rate distribution) and strength volume load (effective sets, 1RM personal records).
+2. **📊 Training Volume & Performance Dashboard (`/dashboard`)**: Separate weekly goal-tracked macro charts for **Zone 2 Cardio** (`120 min/wk` goal) and **VO2 Max Training** (`20 min/wk` Zone 5 goal), plus **Push / Pull / Legs / Abs** resistance volume (`10 sets/wk` goal each, top loads & estimated 1RM). Features preset and custom date-range filters and an interactive workouts table that expands to show notes, strength working sets, self-hosted Mercator SVG GPS route maps, synchronized dual-axis heart rate & pace curves, Multi-Set Pace + HR overlays, and clickable single-interval `Workout Graph` charts.
 3. **🤖 Adaptive AI Coaching (`/coach`)**: Retrospective workout critiques (Analysis Mode) and periodized 7-day or 14-day microcycles (Planning Mode) guided by your training philosophy, running on either Google Gemini or private local `llama.cpp`.
 4. **⚙️ Integrations & Settings Hub (`/config`)**: In-browser configuration for Polar AccessLink, Concept2 Logbook, and AI inference engines with copyable OAuth redirect URIs, live diagnostic health checks, and instant demo data seeding.
 

@@ -15,6 +15,7 @@ from src.models import (
     User,
     UserHeartRateProfile,
     WorkoutSession,
+    WorkoutSplit,
 )
 
 
@@ -32,21 +33,22 @@ class SeedService:
         res_hr = await db.execute(select(UserHeartRateProfile).where(UserHeartRateProfile.user_id == user.id))
         hr = res_hr.scalars().first()
         if not hr:
+            default_max_hr = 185
             hr = UserHeartRateProfile(
                 id=uuid.uuid4(),
                 user_id=user.id,
                 resting_hr=50,
-                max_hr=185,
-                zone1_min=95,
-                zone1_max=114,
-                zone2_min=115,
-                zone2_max=142,
-                zone3_min=143,
-                zone3_max=158,
-                zone4_min=159,
-                zone4_max=172,
-                zone5_min=173,
-                zone5_max=185,
+                max_hr=default_max_hr,
+                zone1_min=round(default_max_hr * 0.50),
+                zone1_max=round(default_max_hr * 0.60),
+                zone2_min=round(default_max_hr * 0.60),
+                zone2_max=round(default_max_hr * 0.70),
+                zone3_min=round(default_max_hr * 0.70),
+                zone3_max=round(default_max_hr * 0.80),
+                zone4_min=round(default_max_hr * 0.80),
+                zone4_max=round(default_max_hr * 0.90),
+                zone5_min=round(default_max_hr * 0.90),
+                zone5_max=default_max_hr,
             )
             db.add(hr)
 
@@ -94,6 +96,13 @@ class SeedService:
                 "slug": "pull-up",
                 "category": "bodyweight",
                 "muscle": "lats",
+                "bodyweight": True,
+            },
+            "hanging_leg_raise": {
+                "name": "Hanging Leg Raise",
+                "slug": "hanging-leg-raise",
+                "category": "bodyweight",
+                "muscle": "abs",
                 "bodyweight": True,
             },
         }
@@ -170,6 +179,7 @@ class SeedService:
             avg_pace_sec_per_km=360.0,
             elevation_gain_m=65.0,
             elevation_loss_m=62.0,
+            user_notes="Relaxed aerobic base effort focusing on nasal breathing and smooth cadence.",
             is_demo=True,
             status="active",
         )
@@ -282,7 +292,7 @@ class SeedService:
         db.add(w4)
         workouts_count += 1
 
-        # 5. Gym Strength Upper Body Session - Today
+        # 5. Gym Strength Full Body (Push/Pull/Legs/Abs) Session - Today
         w5_time = now - timedelta(hours=3)
         w5 = WorkoutSession(
             id=uuid.uuid4(),
@@ -290,25 +300,24 @@ class SeedService:
             provider="gym_mode",
             external_id=f"demo_gym_strength_1_{int(w5_time.timestamp())}",
             discipline="strength",
-            title="Gym Strength: Bench & Pull-ups",
+            title="Gym Strength: Push / Pull / Legs / Abs",
             start_time_utc=w5_time,
             local_timezone="America/Los_Angeles",
             total_duration_sec=2700.0,
             active_duration_sec=2700.0,
             total_distance_m=0.0,
             total_calories=310,
+            user_notes="Solid bar speed on bench and squats; controlled weighted pull-ups + core finisher.",
             is_demo=True,
             status="active",
         )
         db.add(w5)
         workouts_count += 1
 
-        # Sets for w5
+        # 7 seeded sets covering all 4 canonical categories (Push, Pull, Legs, Abs)
         bench_sets = [
-            (1, 10, 135.0, 6.0, True),
-            (2, 8, 185.0, 7.5, False),
-            (3, 8, 185.0, 8.0, False),
-            (4, 6, 205.0, 8.5, False),
+            (1, 8, 185.0, 7.5, False),
+            (2, 6, 205.0, 8.5, False),
         ]
         for s_idx, reps, wt, rpe_val, is_wu in bench_sets:
             s = StrengthSet(
@@ -329,9 +338,8 @@ class SeedService:
             sets_count += 1
 
         pullup_sets = [
-            (1, 8, 0.0, 7.0, False),
-            (2, 8, 15.0, 8.0, False),  # +15 lbs
-            (3, 6, 25.0, 8.5, False),  # +25 lbs
+            (1, 8, 15.0, 8.0, False),  # +15 lbs
+            (2, 6, 25.0, 8.5, False),  # +25 lbs
         ]
         for s_idx, reps, added_wt, rpe_val, is_wu in pullup_sets:
             s = StrengthSet(
@@ -350,6 +358,135 @@ class SeedService:
             )
             db.add(s)
             sets_count += 1
+
+        squat_sets = [
+            (1, 5, 225.0, 7.5, False),
+            (2, 5, 245.0, 8.5, False),
+        ]
+        for s_idx, reps, wt, rpe_val, is_wu in squat_sets:
+            s = StrengthSet(
+                id=uuid.uuid4(),
+                workout_session_id=w5.id,
+                exercise_id=ex_catalog["squat"].id,
+                set_index=s_idx,
+                reps_completed=reps,
+                weight=wt,
+                weight_unit="lbs",
+                is_bodyweight=False,
+                added_weight=0.0,
+                rpe=rpe_val,
+                is_warmup=is_wu,
+                idempotency_key=f"demo_squat_{w5.id}_{s_idx}",
+            )
+            db.add(s)
+            sets_count += 1
+
+        abs_sets = [
+            (1, 15, 0.0, 8.0, False),
+        ]
+        for s_idx, reps, added_wt, rpe_val, is_wu in abs_sets:
+            s = StrengthSet(
+                id=uuid.uuid4(),
+                workout_session_id=w5.id,
+                exercise_id=ex_catalog["hanging_leg_raise"].id,
+                set_index=s_idx,
+                reps_completed=reps,
+                weight=added_wt,
+                weight_unit="lbs",
+                is_bodyweight=True,
+                added_weight=added_wt,
+                rpe=rpe_val,
+                is_warmup=is_wu,
+                idempotency_key=f"demo_abs_{w5.id}_{s_idx}",
+            )
+            db.add(s)
+            sets_count += 1
+
+        # 6. Concept2 4x4min VO2 Max Interval Rower (4min rest) - 3 days ago
+        w6_time = now - timedelta(days=3)
+        w6 = WorkoutSession(
+            id=uuid.uuid4(),
+            user_id=user.id,
+            provider="concept2",
+            external_id=f"demo_c2_interval_row_1_{int(w6_time.timestamp())}",
+            discipline="indoor_row",
+            title="Concept2 4x4min VO2 Max Intervals (4min rest)",
+            start_time_utc=w6_time,
+            local_timezone="America/Los_Angeles",
+            total_duration_sec=1680.0,  # 28 mins total
+            active_duration_sec=960.0,   # 16 mins work
+            total_distance_m=4220.0,
+            total_calories=390,
+            avg_heart_rate=156,
+            max_heart_rate=184,
+            zone1_duration_sec=200.0,
+            zone2_duration_sec=400.0,
+            zone3_duration_sec=180.0,
+            zone4_duration_sec=500.0,
+            zone5_duration_sec=400.0,   # VO2 max stimulus
+            total_strokes=448,
+            avg_cadence_spm=28.0,
+            avg_power_watts=245.0,
+            avg_split_sec_per_500m=113.7,  # 1:53.7
+            avg_drag_factor=130,
+            is_demo=True,
+            status="active",
+        )
+        db.add(w6)
+        workouts_count += 1
+
+        # Splits for w6: 4 work intervals and 3 rest intervals
+        intervals_data = [
+            (1, "interval", 240.0, 1055.0, 113.7, 245.0, 28.0, 162),
+            (2, "rest", 240.0, 0.0, None, 0.0, 0.0, 132),
+            (3, "interval", 240.0, 1060.0, 113.2, 248.0, 28.5, 166),
+            (4, "rest", 240.0, 0.0, None, 0.0, 0.0, 136),
+            (5, "interval", 240.0, 1053.0, 113.9, 243.0, 28.0, 169),
+            (6, "rest", 240.0, 0.0, None, 0.0, 0.0, 138),
+            (7, "interval", 240.0, 1052.0, 114.1, 242.0, 28.0, 172),
+        ]
+        for sp_idx, sp_type, sp_dur, sp_dist, sp_pace, sp_pwr, sp_cad, sp_hr in intervals_data:
+            split_obj = WorkoutSplit(
+                id=uuid.uuid4(),
+                workout_id=w6.id,
+                split_index=sp_idx,
+                split_type=sp_type,
+                duration_sec=sp_dur,
+                distance_m=sp_dist,
+                avg_split_sec_per_500m=sp_pace,
+                avg_pace_sec_per_km=(sp_pace * 2.0) if sp_pace else None,
+                avg_power_watts=sp_pwr,
+                avg_cadence_spm=sp_cad,
+                avg_heart_rate=sp_hr,
+            )
+            db.add(split_obj)
+
+        # Telemetry samples for w6: sampled every 15 seconds across 1680s
+        for sec in range(0, 1681, 15):
+            pt_time = w6_time + timedelta(seconds=sec)
+            # Determine if in work or rest interval
+            int_idx = sec // 240
+            rem_sec = sec % 240
+            fraction = rem_sec / 240.0
+            
+            if int_idx % 2 == 0:
+                # Work interval: HR ramps up to peak
+                base_hr = 145 + (int_idx * 3)
+                peak_hr = 174 + (int_idx * 3)
+                bpm_val = int(base_hr + (peak_hr - base_hr) * fraction)
+            else:
+                # Rest interval: HR drops back down
+                peak_hr = 174 + ((int_idx - 1) * 3)
+                recover_hr = 130 + (int_idx * 2)
+                bpm_val = int(peak_hr - (peak_hr - recover_hr) * fraction)
+
+            hr_sample = HeartRateSample(
+                workout_id=w6.id,
+                timestamp_utc=pt_time,
+                elapsed_sec=float(sec),
+                bpm=bpm_val,
+            )
+            db.add(hr_sample)
 
         await db.commit()
         return workouts_count, sets_count

@@ -4,16 +4,107 @@ import base64
 from datetime import datetime, timedelta, timezone
 import re
 from typing import Any
+import xml.etree.ElementTree as ET
 import httpx
 
 from src.adapters.base import (
     BaseIngestionAdapter,
     NormalizedGPSPoint,
     NormalizedHeartRateSample,
+    NormalizedSplit,
     NormalizedWorkout,
     SyncBatchResult,
 )
 from src.core.config import settings
+
+
+def parse_gpx_points(gpx_xml: str, start_time_utc: datetime | None = None) -> list[dict[str, Any]]:
+    """Parse standard GPX XML trackpoints into coordinate dicts with elapsed_sec, lat, lon, altitude."""
+    if not gpx_xml or "<trkpt" not in gpx_xml:
+        return []
+
+    try:
+        root = ET.fromstring(gpx_xml)
+    except ET.ParseError:
+        return []
+
+    points: list[dict[str, Any]] = []
+    first_ts: datetime | None = None
+
+    for elem in root.iter():
+        tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+        if tag != "trkpt":
+            continue
+        lat_str = elem.attrib.get("lat")
+        lon_str = elem.attrib.get("lon")
+        if lat_str is None or lon_str is None:
+            continue
+
+        try:
+            lat = float(lat_str)
+            lon = float(lon_str)
+        except ValueError:
+            continue
+
+        ele_val: float | None = None
+        pt_ts: datetime | None = None
+        for child in elem:
+            ctag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+            if ctag == "ele" and child.text:
+                try:
+                    ele_val = float(child.text.strip())
+                except ValueError:
+                    pass
+            elif ctag == "time" and child.text:
+                try:
+                    pt_ts = datetime.fromisoformat(child.text.strip().replace("Z", "+00:00"))
+                    if pt_ts.tzinfo is None:
+                        pt_ts = pt_ts.replace(tzinfo=timezone.utc)
+                    pt_ts = pt_ts.astimezone(timezone.utc)
+                except ValueError:
+                    pass
+
+        if first_ts is None and pt_ts is not None:
+            first_ts = pt_ts
+
+        base_ts = start_time_utc or first_ts
+        if pt_ts is not None and base_ts is not None:
+            elapsed = max(0.0, (pt_ts - base_ts).total_seconds())
+        else:
+            elapsed = float(len(points))
+
+        points.append({
+            "elapsed_sec": round(elapsed, 2),
+            "latitude": lat,
+            "longitude": lon,
+            "altitude": ele_val,
+        })
+
+    return points
+
+
+def compute_elevation_from_points(points: list[dict[str, Any]] | list[NormalizedGPSPoint]) -> tuple[float | None, float | None]:
+    """Compute cumulative elevation gain and loss (meters) from GPS points with a 1m hysteresis filter."""
+    eles: list[float] = []
+    for pt in points:
+        val = pt.altitude_m if isinstance(pt, NormalizedGPSPoint) else pt.get("altitude")
+        if val is not None:
+            eles.append(float(val))
+    if len(eles) < 2:
+        return None, None
+
+    gain = 0.0
+    loss = 0.0
+    ref = eles[0]
+    for e in eles[1:]:
+        diff = e - ref
+        if diff >= 1.0:
+            gain += diff
+            ref = e
+        elif diff <= -1.0:
+            loss += abs(diff)
+            ref = e
+    return round(gain, 1), round(loss, 1)
 
 
 def parse_iso_duration(duration_str: str | float | int) -> float:
@@ -155,7 +246,10 @@ class PolarAdapter(BaseIngestionAdapter):
             }
 
     def normalize_polar_exercise(
-        self, exercise_data: dict[str, Any], samples_data: dict[str, Any] | None = None
+        self,
+        exercise_data: dict[str, Any],
+        samples_data: dict[str, Any] | None = None,
+        laps_data: list[dict[str, Any]] | None = None,
     ) -> NormalizedWorkout:
         """Map raw Polar exercise JSON to canonical NormalizedWorkout entity."""
         ext_id = str(exercise_data.get("id"))
@@ -194,6 +288,7 @@ class PolarAdapter(BaseIngestionAdapter):
         # Parse telemetry streams
         hr_samples: list[NormalizedHeartRateSample] = []
         gps_points: list[NormalizedGPSPoint] = []
+        exercise_summary = dict(exercise_data)
 
         if samples_data:
             # HR samples
@@ -205,9 +300,13 @@ class PolarAdapter(BaseIngestionAdapter):
                     NormalizedHeartRateSample(
                         elapsed_sec=sec,
                         bpm=bpm,
-                        timestamp_utc=start_time_utc,
+                        timestamp_utc=start_time_utc + timedelta(seconds=sec),
                     )
                 )
+
+            # Speed samples
+            if "speed" in samples_data and samples_data["speed"]:
+                exercise_summary["speed_samples"] = samples_data["speed"]
 
             # GPS route points
             coord_list = samples_data.get("coordinates") or []
@@ -223,9 +322,35 @@ class PolarAdapter(BaseIngestionAdapter):
                         latitude=lat,
                         longitude=lon,
                         altitude_m=alt_m,
-                        timestamp_utc=start_time_utc,
+                        timestamp_utc=start_time_utc + timedelta(seconds=sec),
                     )
                 )
+
+        # Parse splits / laps
+        splits: list[NormalizedSplit] = []
+        raw_laps = laps_data or exercise_data.get("laps") or []
+        for idx, lap in enumerate(raw_laps, start=1):
+            lap_dur = parse_iso_duration(lap.get("duration", 0))
+            lap_dist = float(lap.get("distance", 0.0))
+            lap_pace = (lap_dur / (lap_dist / 1000.0)) if (lap_dist > 0 and lap_dur > 0) else None
+            lap_hr = lap.get("heart_rate", {}).get("average") if isinstance(lap.get("heart_rate"), dict) else lap.get("heart_rate")
+            splits.append(
+                NormalizedSplit(
+                    split_index=idx,
+                    distance_m=lap_dist,
+                    duration_sec=lap_dur,
+                    split_type="interval",
+                    avg_pace_sec_per_km=lap_pace,
+                    avg_heart_rate=int(lap_hr) if lap_hr else None,
+                )
+            )
+
+        if (elevation_gain is None or elevation_loss is None) and gps_points:
+            calc_gain, calc_loss = compute_elevation_from_points(gps_points)
+            if elevation_gain is None:
+                elevation_gain = calc_gain
+            if elevation_loss is None:
+                elevation_loss = calc_loss
 
         return NormalizedWorkout(
             provider="polar",
@@ -243,9 +368,10 @@ class PolarAdapter(BaseIngestionAdapter):
             avg_pace_sec_per_km=avg_pace,
             elevation_gain_m=float(elevation_gain) if elevation_gain is not None else None,
             elevation_loss_m=float(elevation_loss) if elevation_loss is not None else None,
-            raw_summary=exercise_data,
+            raw_summary=exercise_summary,
             heart_rate_samples=hr_samples,
             gps_route_points=gps_points,
+            splits=splits,
         )
 
     async def register_user(self, access_token: str, member_id: str) -> dict[str, Any] | None:
@@ -316,8 +442,8 @@ class PolarAdapter(BaseIngestionAdapter):
                     continue
                 ex_data = ex_resp.json()
 
-                # Fetch detailed samples (coordinates and heart rate)
-                samples_data: dict[str, Any] = {"heart_rate": [], "coordinates": []}
+                # Fetch detailed samples (coordinates, speed, and heart rate)
+                samples_data: dict[str, Any] = {"heart_rate": [], "coordinates": [], "speed": []}
                 try:
                     samples_url = f"{ex_url}/samples"
                     samples_resp = await client.get(samples_url, headers=headers)
@@ -344,12 +470,85 @@ class PolarAdapter(BaseIngestionAdapter):
                                                 "elapsed_sec": idx * r_rate,
                                                 "bpm": bpm,
                                             })
-                        elif isinstance(raw_samples_resp, dict) and ("heart_rate" in raw_samples_resp or "coordinates" in raw_samples_resp):
-                            samples_data = raw_samples_resp
+                                    elif stype == 1:  # Speed in km/h
+                                        if isinstance(s_data, str):
+                                            spd_list = [float(v.strip()) for v in s_data.split(",") if v.strip().replace(".", "", 1).isdigit()]
+                                        elif isinstance(s_data, list):
+                                            spd_list = [float(v) for v in s_data if isinstance(v, (int, float))]
+                                        else:
+                                            spd_list = []
+                                        for idx, spd in enumerate(spd_list):
+                                            sec = idx * r_rate
+                                            pace = (3600.0 / spd) if spd > 0.5 else None
+                                            samples_data["speed"].append({
+                                                "elapsed_sec": sec,
+                                                "speed_kmh": spd,
+                                                "pace_sec": pace,
+                                            })
+                        elif isinstance(raw_samples_resp, dict):
+                            for k, v in raw_samples_resp.items():
+                                samples_data[k] = v
                 except Exception:
                     pass
 
-                workout = self.normalize_polar_exercise(ex_data, samples_data)
+                # Fetch GPS route via Polar GPX endpoint first (AccessLink v3 standard), then fallback to /coordinates
+                if not samples_data["coordinates"]:
+                    try:
+                        gpx_headers = {
+                            "Authorization": f"Bearer {access_token}",
+                            "Accept": "application/gpx+xml",
+                        }
+                        gpx_resp = await client.get(f"{ex_url}/gpx", headers=gpx_headers)
+                        if gpx_resp.status_code == 200 and "<trkpt" in gpx_resp.text:
+                            start_str = ex_data.get("start-time") or ex_data.get("start_time")
+                            off_min = ex_data.get("start-time-utc-offset")
+                            parsed_start = None
+                            if start_str:
+                                try:
+                                    if "Z" in start_str or "+" in start_str or (len(start_str) > 19 and "-" in start_str[19:]):
+                                        parsed_start = datetime.fromisoformat(start_str.replace("Z", "+00:00")).astimezone(timezone.utc)
+                                    elif off_min is not None:
+                                        parsed_start = datetime.fromisoformat(start_str).replace(tzinfo=timezone(timedelta(minutes=int(off_min)))).astimezone(timezone.utc)
+                                except Exception:
+                                    parsed_start = None
+                            samples_data["coordinates"] = parse_gpx_points(gpx_resp.text, start_time_utc=parsed_start)
+                    except Exception:
+                        pass
+
+                if not samples_data["coordinates"]:
+                    try:
+                        coord_url = f"{ex_url}/coordinates"
+                        coord_resp = await client.get(coord_url, headers=headers)
+                        if coord_resp.status_code == 200:
+                            c_json = coord_resp.json()
+                            c_list = c_json.get("coordinates") if isinstance(c_json, dict) else c_json
+                            if isinstance(c_list, list):
+                                samples_data["coordinates"] = c_list
+                    except Exception:
+                        pass
+
+                # Fetch Polar-computed HR zones before committing the transaction
+                try:
+                    hz_resp = await client.get(f"{ex_url}/heart-rate-zones", headers=headers)
+                    if hz_resp.status_code == 200:
+                        hz_json = hz_resp.json()
+                        if isinstance(hz_json, dict) and hz_json.get("zone"):
+                            ex_data["polar_zones"] = hz_json["zone"]
+                except Exception:
+                    pass
+
+                # Try fetching laps/splits
+                laps_data = None
+                try:
+                    laps_url = f"{ex_url}/laps"
+                    laps_resp = await client.get(laps_url, headers=headers)
+                    if laps_resp.status_code == 200:
+                        l_json = laps_resp.json()
+                        laps_data = l_json.get("laps") if isinstance(l_json, dict) else l_json
+                except Exception:
+                    pass
+
+                workout = self.normalize_polar_exercise(ex_data, samples_data, laps_data=laps_data)
                 normalized_workouts.append(workout)
 
             # Step 4: Commit transaction to mark exercises as processed

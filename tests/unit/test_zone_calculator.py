@@ -64,3 +64,53 @@ def test_multi_zone_distribution(mock_hr_profile):
     assert durations.zone4_sec == 10.0
     assert durations.zone3_sec == 0.0
     assert durations.zone5_sec == 0.0
+
+
+def test_inclusive_and_contiguous_boundary_classification():
+    now = datetime.now(timezone.utc)
+    # Non-overlapping inclusive bounds (zoneX_max = zone(X+1)_min - 1)
+    inclusive_profile = UserHeartRateProfile(
+        resting_hr=50,
+        max_hr=185,
+        zone1_min=93,
+        zone1_max=110,
+        zone2_min=111,
+        zone2_max=129,
+        zone3_min=130,
+        zone3_max=147,
+        zone4_min=148,
+        zone4_max=166,
+        zone5_min=167,
+        zone5_max=185,
+    )
+    # Samples land directly on zone4_max (166), zone5_min (167), and zone2_max (129)
+    samples = [
+        NormalizedHeartRateSample(elapsed_sec=0.0, bpm=129, timestamp_utc=now),
+        NormalizedHeartRateSample(elapsed_sec=5.0, bpm=166, timestamp_utc=now),
+        NormalizedHeartRateSample(elapsed_sec=10.0, bpm=167, timestamp_utc=now),
+        NormalizedHeartRateSample(elapsed_sec=15.0, bpm=180, timestamp_utc=now),
+    ]
+    durations = calculate_zone_durations(samples, inclusive_profile)
+    assert durations.zone2_sec == 5.0
+    assert durations.zone4_sec == 5.0
+    assert durations.zone5_sec == 5.0
+
+    # Contiguous bounds (zone4_max == zone5_min == 167)
+    contiguous_profile = UserHeartRateProfile(
+        resting_hr=50,
+        max_hr=185,
+        zone1_min=93,
+        zone1_max=111,
+        zone2_min=111,
+        zone2_max=130,
+        zone3_min=130,
+        zone3_max=148,
+        zone4_min=148,
+        zone4_max=167,
+        zone5_min=167,
+        zone5_max=185,
+    )
+    durations_contig = calculate_zone_durations(samples, contiguous_profile)
+    assert durations_contig.zone2_sec == 5.0
+    assert durations_contig.zone4_sec == 5.0
+    assert durations_contig.zone5_sec == 5.0

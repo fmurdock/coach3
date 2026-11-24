@@ -2,7 +2,7 @@
 
 from datetime import datetime, date
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -74,3 +74,47 @@ class UnifiedVolumeSummary(BaseModel):
     effective_working_sets: int = 0
     cardio: Optional[CardioAnalyticsResponse] = None
     strength: Optional[StrengthAnalyticsResponse] = None
+
+
+# Feature 006: Revamped Macro Dashboard Schemas
+class WeeklyCardioBucket(BaseModel):
+    week_label: str
+    miles: float = 0.0
+    zone2_hours: float = 0.0
+    zone2_minutes: float = 0.0
+    zone4_minutes: float = 0.0
+    zone5_minutes: float = 0.0
+
+
+class CardioVolumeSummary(BaseModel):
+    total_cardio_minutes: float = 0.0
+    zone2_minutes: float = 0.0
+    zone4_minutes: float = 0.0
+    zone5_minutes: float = 0.0
+    zone2_percentage: float = 0.0
+    zone5_percentage: float = 0.0
+    zone2_weekly_goal_minutes: float = 120.0
+    vo2max_weekly_goal_minutes: float = 20.0
+    zone2_avg_weekly_minutes: float = 0.0
+    zone4_avg_weekly_minutes: float = 0.0
+    vo2max_avg_weekly_minutes: float = 0.0
+    weekly_trend: List[WeeklyCardioBucket] = Field(default_factory=list)
+
+
+class MuscleGroupVolumeSummary(BaseModel):
+    muscle_group: Literal["push", "pull", "legs", "abs", "other"]
+    display_name: str
+    working_sets: int = 0
+    weekly_avg_sets: float = 0.0
+    weekly_goal_sets: float = 10.0
+    goal_progress_pct: float = 0.0
+    total_reps: int = 0
+    top_exercise_name: Optional[str] = None
+    top_weight_lbs: Optional[float] = None
+    top_reps: Optional[int] = None
+    estimated_1rm_lbs: Optional[float] = None
+
+
+class DashboardMacroResponse(BaseModel):
+    cardio: CardioVolumeSummary
+    resistance: List[MuscleGroupVolumeSummary] = Field(default_factory=list)
