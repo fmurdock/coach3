@@ -436,3 +436,34 @@ def test_golden_by_shorthand(parser):
     assert result.parsed_sets[0].sets == 5
     assert result.parsed_sets[0].reps == 10
     assert result.parsed_sets[0].weight == 185.0
+
+
+def test_prepositionless_weight_parsing(parser):
+    r1 = parser.parse("bench press 225 lbs 3x5")
+    assert len(r1.parsed_sets) == 1
+    assert r1.parsed_sets[0].exercise_name == "Barbell Bench Press"
+    assert r1.parsed_sets[0].weight == 225.0
+    assert r1.parsed_sets[0].weight_unit == "lbs"
+    assert r1.parsed_sets[0].sets == 3
+    assert r1.parsed_sets[0].reps == 5
+
+    r2 = parser.parse("225lb squat 5x5")
+    assert len(r2.parsed_sets) == 1
+    assert r2.parsed_sets[0].exercise_name == "Barbell Back Squat"
+    assert r2.parsed_sets[0].weight == 225.0
+    assert r2.parsed_sets[0].sets == 5
+    assert r2.parsed_sets[0].reps == 5
+
+
+def test_default_unit_kg_preserved_when_unit_omitted(parser):
+    result = parser.parse("3x5 bench at 100", default_unit="kg")
+    assert len(result.parsed_sets) == 1
+    assert result.parsed_sets[0].weight == 100.0
+    assert result.parsed_sets[0].weight_unit == "kg"
+
+
+def test_unrecognized_gibberish_returns_ambiguous_and_empty_sets(parser):
+    result = parser.parse("florbledorf 3x10 at 50 lbs")
+    assert result.is_ambiguous is True
+    assert result.parsed_sets == []
+

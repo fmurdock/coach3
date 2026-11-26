@@ -1,9 +1,9 @@
 [project]
 name = "coach3"
-version = "0.1.0"
+version = "0.2.0"
 description = "Self-hosted workout tracker and AI fitness coach"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.28.0",
@@ -17,6 +17,7 @@ dependencies = [
     "httpx>=0.27.0",
     "cryptography>=42.0.0",
     "rapidfuzz>=3.6.0",
+    "defusedxml>=0.7.1",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +26,8 @@ dev = [
     "pytest-asyncio>=0.23.5",
     "pytest-mock>=3.12.0",
     "aiosqlite>=0.20.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
 ]
 
 [build-system]
@@ -39,6 +42,27 @@ minversion = "8.0"
 addopts = "-ra -q --asyncio-mode=auto"
 testpaths = ["tests"]
 pythonpath = ["."]
-filterwarnings = [
-    "ignore::DeprecationWarning",
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "S", "B"]
+ignore = [
+    "E501",  # line length handled pragmatically for prompts/SQL strings
+    "B008",  # FastAPI Depends(...) / Query(...) in default arguments
+    "S101",  # assert allowed in tests (per-file ignore also set)
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S108"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true
+disallow_untyped_defs = false

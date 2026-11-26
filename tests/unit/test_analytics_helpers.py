@@ -1,24 +1,23 @@
 """Unit tests for Phase 2 Analytics schemas, muscle group classifier, and 1RM calculation."""
 
-import pytest
 from src.schemas.analytics import CardioVolumeSummary, MuscleGroupVolumeSummary, DashboardMacroResponse
-from src.schemas.workout import WorkoutTableRow, WorkoutDetailTelemetry, TelemetryPoint
 from src.services.analytics_service import AnalyticsService
 
 
-def test_brzycki_1rm_calculation():
+def test_epley_1rm_calculation():
     # Test 1 rep
     assert AnalyticsService.calculate_estimated_1rm(225.0, 1) == 225.0
 
-    # Test 5 reps at 200 lbs: 200 * (36 / 32) = 225.0
-    assert AnalyticsService.calculate_estimated_1rm(200.0, 5) == 225.0
+    # Test 5 reps at 200 lbs: canonical Epley = 200 * (1 + 5/30) = 233.33
+    assert AnalyticsService.calculate_estimated_1rm(200.0, 5) == 233.33
 
-    # Test 10 reps at 100 lbs: 100 * (36 / 27) = 133.3
-    assert AnalyticsService.calculate_estimated_1rm(100.0, 10) == 133.3
+    # Test 10 reps at 100 lbs: canonical Epley = 100 * (1 + 10/30) = 133.33
+    assert AnalyticsService.calculate_estimated_1rm(100.0, 10) == 133.33
 
-    # Test zero or negative bounds
-    assert AnalyticsService.calculate_estimated_1rm(0.0, 5) == 0.0
-    assert AnalyticsService.calculate_estimated_1rm(100.0, 0) == 0.0
+    # Test >10 reps, zero, or negative bounds return None
+    assert AnalyticsService.calculate_estimated_1rm(100.0, 11) is None
+    assert AnalyticsService.calculate_estimated_1rm(0.0, 5) is None
+    assert AnalyticsService.calculate_estimated_1rm(100.0, 0) is None
 
 
 def test_normalize_muscle_group():

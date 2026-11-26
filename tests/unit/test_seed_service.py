@@ -16,7 +16,7 @@ async def test_seed_and_purge_demo_workouts(db_session: AsyncSession):
     assert s_count == 7
 
     # Verify workouts created with is_demo=True
-    q = select(WorkoutSession).where(WorkoutSession.is_demo == True)
+    q = select(WorkoutSession).where(WorkoutSession.is_demo.is_(True))
     res = await db_session.execute(q)
     demos = res.scalars().all()
     assert len(demos) == 6
@@ -53,7 +53,7 @@ async def test_seed_and_purge_demo_workouts(db_session: AsyncSession):
     assert deleted == 6
 
     # 4. Verify authentic workout was preserved
-    q_real = select(WorkoutSession).where(WorkoutSession.is_demo == False)
+    q_real = select(WorkoutSession).where(WorkoutSession.is_demo.is_(False))
     res_real = await db_session.execute(q_real)
     reals = res_real.scalars().all()
     assert len(reals) == 1

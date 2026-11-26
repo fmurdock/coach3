@@ -7,10 +7,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import WorkoutSession
-from src.models.coaching import CoachingPhilosophy, LLMProviderConfig
-from src.models.exercise import StrengthExercise
-from src.models.strength_set import StrengthSet
-from src.schemas.coaching import LLMCritiqueOutput
+from src.models.coaching import CoachingPhilosophy
 from src.services.coaching_service import CoachingService
 from src.services.llm_client import BaseLLMClient
 
@@ -261,4 +258,124 @@ async def test_generate_forward_plan_7_day(db_session: AsyncSession, sample_user
     # Verify philosophy & manual notes were injected in system prompt
     assert "No overhead press" in mock_client.last_system_prompt
     assert "10.0%" in mock_client.last_system_prompt
+
+
+@pytest.mark.asyncio
+async def test_concurrent_inflight_ai_request_rejected_with_busy_error(db_session: AsyncSession, sample_user):
+    import asyncio
+    from src.services.coaching_service import CoachingBusyError
+
+    user, _ = sample_user
+    service = CoachingService()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowLLMClient(MockLLMClient):
+        async def generate_structured(self, system_prompt: str, user_prompt: str) -> str:
+            started.set()
+            await release.wait()
+            return self.canned_response
+
+    phil = CoachingPhilosophy(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        name="Concurrency Phil",
+        target_zone2_pct=80.0,
+        max_weekly_volume_ramp_pct=10.0,
+        min_rest_days_per_week=1,
+        is_active=True,
+    )
+    sess = WorkoutSession(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        provider="polar",
+        external_id="busy-lock-1",
+        discipline="outdoor_run",
+        title="Lock Run",
+        start_time_utc=datetime.now(timezone.utc),
+        total_duration_sec=1800.0,
+        active_duration_sec=1800.0,
+        total_distance_m=5000.0,
+    )
+    db_session.add_all([phil, sess])
+    await db_session.commit()
+
+    canned = json.dumps({
+        "adherence_score": 88.0,
+        "summary_markdown": "Good",
+        "adherence_details": {},
+        "strain_assessment": {},
+        "recommendations": ["Keep it up"],
+    })
+    slow = SlowLLMClient(canned)
+
+    task1 = asyncio.create_task(
+        service.analyze_workout(db_session, user.id, workout_session_id=sess.id, philosophy=phil, llm_client=slow, provider_name="mock")
+    )
+    await started.wait()
+
+    with pytest.raises(CoachingBusyError):
+        await service.analyze_workout(db_session, user.id, workout_session_id=sess.id, philosophy=phil, llm_client=slow, provider_name="mock")
+
+    release.set()
+    res1 = await task1
+    assert res1.adherence_score == 88.0
+
+
+def test_schedule_invariant_validation_and_active_weeks_baseline():
+    from src.schemas.coaching import LLMScheduleOutput, LLMWorkoutItem
+
+    # 1. Invalid day_offset >= horizon_days
+    out_of_range = LLMScheduleOutput(
+        summary_markdown="Bad offset",
+        workouts=[LLMWorkoutItem(day_offset=8, discipline="outdoor_run", title="Run", planned_duration_min=45)],
+    )
+    with pytest.raises(ValueError, match="day_offset"):
+        CoachingService.validate_schedule_invariants(out_of_range, horizon_days=7, min_rest_days_per_week=1)
+
+    # 2. Duplicate day_offset
+    dup = LLMScheduleOutput(
+        summary_markdown="Dup",
+        workouts=[
+            LLMWorkoutItem(day_offset=0, discipline="outdoor_run", title="R1", planned_duration_min=30),
+            LLMWorkoutItem(day_offset=0, discipline="strength", title="S1", planned_duration_min=45),
+        ],
+    )
+    with pytest.raises(ValueError, match="Duplicate"):
+        CoachingService.validate_schedule_invariants(dup, horizon_days=7, min_rest_days_per_week=1)
+
+    # 3. Missing required rest days (7 consecutive active days when min_rest=2)
+    no_rest = LLMScheduleOutput(
+        summary_markdown="No rest",
+        workouts=[
+            LLMWorkoutItem(day_offset=d, discipline="outdoor_run", title=f"Run {d}", planned_duration_min=45)
+            for d in range(7)
+        ],
+    )
+    with pytest.raises(ValueError, match="minimum rest days"):
+        CoachingService.validate_schedule_invariants(no_rest, horizon_days=7, min_rest_days_per_week=2)
+
+    # 4. Active-weeks baseline for brand new athlete with 1 week of 180 mins -> 180.0 (NOT 45.0!)
+    w1 = WorkoutSession(
+        user_id=uuid.uuid4(),
+        provider="polar",
+        external_id="bw1",
+        discipline="outdoor_run",
+        title="Run 1",
+        start_time_utc=datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc),
+        total_duration_sec=5400.0,
+        active_duration_sec=5400.0,
+    )
+    w2 = WorkoutSession(
+        user_id=w1.user_id,
+        provider="polar",
+        external_id="bw2",
+        discipline="outdoor_run",
+        title="Run 2",
+        start_time_utc=datetime(2026, 11, 19, 12, 0, tzinfo=timezone.utc),
+        total_duration_sec=5400.0,
+        active_duration_sec=5400.0,
+    )
+    assert CoachingService.calculate_baseline_weekly_minutes([w1, w2], tz_name="UTC") == 180.0
+
 

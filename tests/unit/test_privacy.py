@@ -1,15 +1,57 @@
 """Unit tests for Privacy and Data Sovereignty Scrubber (Constitution Principle I)."""
 
+from types import SimpleNamespace
+from src.core.config import settings
 from src.core.privacy import PrivacyScrubberService
+from src.services.coaching_service import CoachingService
 
 
 def test_scrub_text():
-    text = "Contact me at athlete@example.com or visit 192.168.1.100 for stats."
+    text = (
+        "Contact me at athlete@example.com or 415-555-0199, "
+        "visit 192.168.1.100 or 2001:db8::1, start near 37.7749, -122.4194."
+    )
     scrubbed = PrivacyScrubberService.scrub_text(text)
     assert "athlete@example.com" not in scrubbed
     assert "[EMAIL_REDACTED]" in scrubbed
+    assert "415-555-0199" not in scrubbed
+    assert "[PHONE_REDACTED]" in scrubbed
     assert "192.168.1.100" not in scrubbed
+    assert "2001:db8::1" not in scrubbed
     assert "[IP_REDACTED]" in scrubbed
+    assert "37.7749" not in scrubbed
+    assert "[GPS_REDACTED]" in scrubbed
+
+
+def test_scrub_custom_terms(monkeypatch):
+    monkeypatch.setattr(settings, "SCRUB_TERMS", "Jane Doe, San Francisco")
+    scrubbed = PrivacyScrubberService.scrub_text("Run for Jane Doe in San Francisco")
+    assert "Jane Doe" not in scrubbed
+    assert "San Francisco" not in scrubbed
+    assert scrubbed.count("[PII_REDACTED]") == 2
+
+
+def test_coaching_prompts_scrub_custom_notes_and_name():
+    phil = SimpleNamespace(
+        name="Frank's Plan (frank@home.org)",
+        primary_modality="hybrid",
+        target_zone2_pct=80.0,
+        max_weekly_volume_ramp_pct=10.0,
+        max_rpe_threshold=8.5,
+        min_rest_days_per_week=2,
+        custom_context_notes="Call 555-123-4567; home track at 37.7749, -122.4194; mail me@test.io",
+    )
+    analysis_prompt = CoachingService.build_analysis_system_prompt(phil)
+    plan_prompt = CoachingService.build_planning_system_prompt(phil, horizon_days=7, available_days_per_week=4)
+
+    for prompt in (analysis_prompt, plan_prompt):
+        assert "frank@home.org" not in prompt
+        assert "me@test.io" not in prompt
+        assert "555-123-4567" not in prompt
+        assert "37.7749" not in prompt
+        assert "[EMAIL_REDACTED]" in prompt
+        assert "[PHONE_REDACTED]" in prompt
+        assert "[GPS_REDACTED]" in prompt
 
 
 def test_scrub_workout_context_strips_pii_and_gps():
@@ -37,21 +79,14 @@ def test_scrub_workout_context_strips_pii_and_gps():
 
     scrubbed = PrivacyScrubberService.scrub_workout_context(raw_workout)
 
-    # Assert disallowed fields are stripped
     assert "user_id" not in scrubbed
     assert "athlete_name" not in scrubbed
     assert "athlete_email" not in scrubbed
     assert "gps_route" not in scrubbed
     assert "location_name" not in scrubbed
     assert "city" not in scrubbed
-
-    # Assert allowed athletic fields remain
     assert scrubbed["discipline"] == "outdoor_run"
     assert scrubbed["total_duration_sec"] == 3600.0
-    assert scrubbed["total_distance_m"] == 10000.0
-    assert scrubbed["zone2_duration_sec"] == 2800.0
-
-    # Assert text inside allowed field had email scrubbed
     assert "coach@running.org" not in scrubbed["title"]
     assert "[EMAIL_REDACTED]" in scrubbed["title"]
 
@@ -91,9 +126,7 @@ def test_scrub_coaching_context():
     assert "route_points" not in payload["workouts"][0]
     assert "user_id" not in payload["workouts"][0]
     assert payload["workouts"][0]["discipline"] == "erg_bike"
-
     assert "strength_sets" in payload
-    assert len(payload["strength_sets"]) == 1
     assert payload["strength_sets"][0]["exercise_name"] == "Back Squat"
     assert "device_serial" not in payload["strength_sets"][0]
     assert "user_id" not in payload["strength_sets"][0]

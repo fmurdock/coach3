@@ -3,9 +3,10 @@
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 import math
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, Literal, Optional, Tuple, cast
 import uuid
-from sqlalchemy import func, select
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.concept2 import parse_concept2_strokes
@@ -19,7 +20,6 @@ from src.schemas.workout import (
     StrengthSetDetail,
     TelemetryPoint,
     WorkoutDetailTelemetry,
-    WorkoutTableRow,
 )
 from src.schemas.analytics import (
     CardioAnalyticsResponse,
@@ -28,15 +28,23 @@ from src.schemas.analytics import (
     DashboardMacroResponse,
     MuscleGroupVolumeSummary,
     StrengthAnalyticsResponse,
-    UnifiedVolumeSummary,
     WeeklyCardioBucket,
     WindowPreset,
 )
+from src.services.metrics import KG_TO_LBS, KM_TO_MILES, calculate_epley_1rm
 
-KM_TO_MILES = 0.621371
+
+def _resolve_tz(tz_name: str | None) -> ZoneInfo:
+    try:
+        return ZoneInfo((tz_name or "UTC").strip())
+    except (ZoneInfoNotFoundError, KeyError, ValueError):
+        return ZoneInfo("UTC")
 
 
-KG_TO_LBS = 2.20462
+def _to_local_date(dt: datetime, tz_name: str | None = "UTC") -> date:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_resolve_tz(tz_name)).date()
 
 
 class AnalyticsService:
@@ -85,28 +93,23 @@ class AnalyticsService:
         return "other", "Other"
 
     @staticmethod
-    def calculate_estimated_1rm(weight: float, reps: int) -> float:
-        """Calculates estimated 1RM using the standard Brzycki formula."""
-        if weight <= 0 or reps <= 0:
-            return 0.0
-        if reps == 1:
-            return round(weight, 1)
-        if reps >= 37:
-            return round(weight * (1.0 + reps / 30.0), 1)
-        # Brzycki formula: weight * (36 / (37 - reps))
-        return round(weight * (36.0 / (37.0 - reps)), 1)
+    def calculate_estimated_1rm(weight: float, reps: int) -> Optional[float]:
+        """Calculates estimated 1RM using the canonical Epley formula capped at 1 <= reps <= 10."""
+        return calculate_epley_1rm(weight, reps)
 
     @staticmethod
     def resolve_date_window(
         window: Optional[WindowPreset] = None,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
+        tz_name: str = "UTC",
     ) -> Tuple[datetime, datetime]:
-        """Resolves date bounds to UTC datetimes."""
+        """Resolves date bounds in the athlete's local IANA timezone and returns UTC datetimes."""
+        tz = _resolve_tz(tz_name)
         now = datetime.now(timezone.utc)
         if start_date and end_date:
-            start_dt = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
-            end_dt = datetime.combine(end_date, datetime.max.time(), tzinfo=timezone.utc)
+            start_dt = datetime.combine(start_date, datetime.min.time(), tzinfo=tz).astimezone(timezone.utc)
+            end_dt = datetime.combine(end_date, datetime.max.time(), tzinfo=tz).astimezone(timezone.utc)
             return start_dt, end_dt
 
         preset = window or WindowPreset.THIRTY_DAYS
@@ -117,7 +120,9 @@ class AnalyticsService:
         elif preset == WindowPreset.NINETY_DAYS:
             return now - timedelta(days=90), now
         elif preset == WindowPreset.YEAR_TO_DATE:
-            return datetime(now.year, 1, 1, 0, 0, 0, tzinfo=timezone.utc), now
+            local_now = now.astimezone(tz)
+            ytd_start = datetime(local_now.year, 1, 1, 0, 0, 0, tzinfo=tz).astimezone(timezone.utc)
+            return ytd_start, now
         elif preset == WindowPreset.ALL_TIME:
             return datetime(1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc), now
         return now - timedelta(days=30), now
@@ -128,6 +133,7 @@ class AnalyticsService:
         user_id: uuid.UUID,
         start_time: datetime,
         end_time: datetime,
+        tz_name: str = "UTC",
     ) -> DashboardMacroResponse:
         """Computes unified macro cardio volume (Zone 2 vs Zone 5 minutes) and muscle group sets with top weight highlights."""
         from src.models.exercise import StrengthExercise
@@ -167,8 +173,9 @@ class AnalyticsService:
             zone4_sec += z4
             zone5_sec += z5
 
-            # Weekly bucket grouping (keyed by Monday date for chronological sort)
-            w_start = w.start_time_utc.date() - timedelta(days=w.start_time_utc.weekday())
+            # Weekly bucket grouping in athlete's local IANA timezone (keyed by local Monday date)
+            local_d = _to_local_date(w.start_time_utc, tz_name)
+            w_start = local_d - timedelta(days=local_d.weekday())
             if w_start not in weekly_buckets:
                 weekly_buckets[w_start] = {
                     "miles": 0.0,
@@ -288,12 +295,20 @@ class AnalyticsService:
 
             est_1rm = self.calculate_estimated_1rm(wt, reps)
 
-            if m["top_weight_lbs"] is None or wt > m["top_weight_lbs"]:
+            # Pair top_exercise_name, top_weight_lbs, top_reps, and estimated_1rm_lbs from the SAME winning set
+            cur_1rm = m["estimated_1rm_lbs"]
+            cur_wt = m["top_weight_lbs"]
+            is_new_top = False
+            if est_1rm is not None:
+                if cur_1rm is None or est_1rm > cur_1rm or (est_1rm == cur_1rm and (cur_wt is None or wt > cur_wt)):
+                    is_new_top = True
+            elif cur_1rm is None and (cur_wt is None or wt > cur_wt):
+                is_new_top = True
+
+            if is_new_top:
                 m["top_weight_lbs"] = round(wt, 1)
                 m["top_reps"] = reps
                 m["top_exercise_name"] = exercise.canonical_name
-
-            if m["estimated_1rm_lbs"] is None or est_1rm > m["estimated_1rm_lbs"]:
                 m["estimated_1rm_lbs"] = est_1rm
 
         resistance_summary = []
@@ -306,7 +321,7 @@ class AnalyticsService:
             progress_pct = round((weekly_avg / goal_sets) * 100.0, 1) if goal_sets > 0 else 0.0
             resistance_summary.append(
                 MuscleGroupVolumeSummary(
-                    muscle_group=slug,
+                    muscle_group=cast(Literal["push", "pull", "legs", "abs", "other"], slug),
                     display_name=info["display_name"],
                     working_sets=info["working_sets"],
                     weekly_avg_sets=weekly_avg,
@@ -404,25 +419,7 @@ class AnalyticsService:
             for st_item in aligned_strokes:
                 strokes_by_interval[st_item["interval_index"]].append(st_item)
 
-        # 4. Fallback for outdoor runs: physiological dynamic pace from HR deflection around mean
-        mean_hr = float(w.avg_heart_rate) if w.avg_heart_rate else None
-        mean_pace = float(w.avg_pace_sec_per_km) if w.avg_pace_sec_per_km else None
         sorted_hr = sorted(w.heart_rate_samples, key=lambda x: x.elapsed_sec)
-        if not mean_hr and sorted_hr:
-            mean_hr = sum(s.bpm for s in sorted_hr) / len(sorted_hr)
-
-        hr_smooth_map: dict[float, float] = {}
-        if len(sorted_hr) > 5 and mean_hr and mean_pace and mean_pace > 60:
-            window_size = 15
-            bpm_vals = [s.bpm for s in sorted_hr]
-            for idx, s in enumerate(sorted_hr):
-                start_i = max(0, idx - window_size // 2)
-                end_i = min(len(bpm_vals), idx + window_size // 2 + 1)
-                local_hr = sum(bpm_vals[start_i:end_i]) / (end_i - start_i)
-                hr_delta_ratio = (local_hr - mean_hr) / mean_hr
-                dyn_pace = mean_pace * (1.0 - 0.35 * hr_delta_ratio)
-                clamped_pace = max(mean_pace * 0.75, min(mean_pace * 1.30, dyn_pace))
-                hr_smooth_map[s.elapsed_sec] = round(clamped_pace, 1)
 
         def _default_split_pace(sp) -> Optional[float]:
             if w.discipline == "indoor_row":
@@ -435,6 +432,22 @@ class AnalyticsService:
 
         sorted_speed_keys = sorted(speed_samples_map.keys())
         sorted_gps_keys = sorted(gps_pace_map.keys())
+        has_split_pace = any(_default_split_pace(sp) is not None for sp, _, _ in split_intervals)
+
+        if aligned_strokes:
+            pace_source = "strokes"
+        elif sorted_speed_keys:
+            pace_source = "speed_samples"
+        elif sorted_gps_keys:
+            pace_source = "gps"
+        elif has_split_pace:
+            pace_source = "splits"
+        elif (w.discipline == "indoor_row" and w.avg_split_sec_per_500m) or (
+            w.discipline in ("outdoor_run", "erg_bike") and w.avg_pace_sec_per_km
+        ):
+            pace_source = "session_average"
+        else:
+            pace_source = "none"
 
         def _lookup_nearest(sorted_keys: list[float], val_map: dict[float, float], sec: float, max_diff: float) -> Optional[float]:
             if not sorted_keys:
@@ -449,28 +462,20 @@ class AnalyticsService:
             return val_map[best] if abs(best - sec) <= max_diff else None
 
         def get_pace_for_elapsed(sec: float) -> Optional[float]:
-            # A. Polar speed samples (do not fall back to synthetic HR pace if real speed stream exists)
+            # A. Real Polar speed samples
             if sorted_speed_keys:
                 return _lookup_nearest(sorted_speed_keys, speed_samples_map, sec, 5.0)
 
-            # B. GPS calculated pace
+            # B. Real GPS calculated pace
             if sorted_gps_keys:
                 return _lookup_nearest(sorted_gps_keys, gps_pace_map, sec, 15.0)
 
-            # C. Split intervals (work/rest/splits)
+            # C. Measured split/interval pace
             for sp, st, en in split_intervals:
                 if st <= sec <= en:
                     return _default_split_pace(sp)
 
-            # D. Physiological dynamic pace from HR variations
-            if sec in hr_smooth_map:
-                return hr_smooth_map[sec]
-
-            # E. Session averages
-            if w.discipline == "indoor_row":
-                return w.avg_split_sec_per_500m
-            elif w.discipline in ("outdoor_run", "erg_bike"):
-                return w.avg_pace_sec_per_km
+            # Never fabricate continuous pace curves from heart rate!
             return None
 
         # Build continuous time_series
@@ -532,7 +537,7 @@ class AnalyticsService:
             time_series = []
 
         # Enrich split details with ending/max HR from raw_summary & per-split stroke series
-        raw_intervals_meta = []
+        raw_intervals_meta: list[dict[str, Any]] = []
         if w.raw_summary and isinstance(w.raw_summary, dict):
             raw_intervals_meta = (
                 w.raw_summary.get("intervals")
@@ -691,6 +696,7 @@ class AnalyticsService:
             elevation_gain_m=w.elevation_gain_m,
             elevation_loss_m=w.elevation_loss_m,
             rest_distance_m=rest_dist,
+            pace_source=pace_source,
             hr_zone_seconds=hr_zone_seconds,
             time_series=time_series,
             splits=splits_detail,
@@ -705,8 +711,9 @@ class AnalyticsService:
         user_id: uuid.UUID,
         start_time: datetime,
         end_time: datetime,
+        tz_name: str = "UTC",
     ) -> CardioAnalyticsResponse:
-        """Aggregates cardiovascular volume, Zone 2 duration, and weekly trends."""
+        """Aggregates cardiovascular volume, Zone 2 duration, and chronologically sorted weekly trends."""
         stmt = (
             select(WorkoutSession)
             .where(
@@ -732,7 +739,7 @@ class AnalyticsService:
         erg_row_m = 0.0
         erg_bike_m = 0.0
 
-        weekly_buckets: Dict[str, Dict[str, float]] = defaultdict(
+        weekly_buckets: Dict[date, Dict[str, float]] = defaultdict(
             lambda: {"miles": 0.0, "zone2_hours": 0.0}
         )
 
@@ -760,13 +767,12 @@ class AnalyticsService:
             elif w.discipline == "erg_bike":
                 erg_bike_m += dist
 
-            # Weekly bucket by ISO week label (e.g., 'W46 (11/11)')
-            start_date_val = w.start_time_utc.date()
-            monday = start_date_val - timedelta(days=start_date_val.weekday())
-            week_label = f"W{monday.isocalendar()[1]} ({monday.strftime('%m/%d')})"
+            # Weekly bucket keyed by athlete-local Monday date for chronological cross-year sorting
+            local_d = _to_local_date(w.start_time_utc, tz_name)
+            monday = local_d - timedelta(days=local_d.weekday())
             miles = (dist / 1000.0) * KM_TO_MILES
-            weekly_buckets[week_label]["miles"] += miles
-            weekly_buckets[week_label]["zone2_hours"] += z2 / 3600.0
+            weekly_buckets[monday]["miles"] += miles
+            weekly_buckets[monday]["zone2_hours"] += z2 / 3600.0
 
         total_distance_km = round(total_distance_m / 1000.0, 2)
         total_distance_miles = round(total_distance_km * KM_TO_MILES, 2)
@@ -788,11 +794,11 @@ class AnalyticsService:
 
         weekly_trend = [
             CardioWeeklyTrendPoint(
-                week_label=label,
+                week_label=f"W{monday.isocalendar()[1]:02d} ({monday.strftime('%m/%d')})",
                 miles=round(data["miles"], 2),
                 zone2_hours=round(data["zone2_hours"], 2),
             )
-            for label, data in sorted(weekly_buckets.items())
+            for monday, data in sorted(weekly_buckets.items(), key=lambda item: item[0])
         ]
 
         return CardioAnalyticsResponse(

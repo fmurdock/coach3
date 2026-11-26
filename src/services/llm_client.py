@@ -1,12 +1,13 @@
 """Dual-Engine LLM HTTP Clients for Google Gemini and local llama.cpp."""
 
 import abc
-import json
 import time
-from typing import Any, Dict, Optional
+from typing import Optional
 import httpx
 
-from src.core.security import decrypt_token, encrypt_token
+from src.core.http_client import request_with_retry, validate_endpoint_url
+from src.core.logging import redact_secrets
+from src.core.security import decrypt_token_safe
 from src.schemas.coaching import ProviderHealthResponse
 
 
@@ -38,12 +39,21 @@ class GeminiClient(BaseLLMClient):
         self.timeout_sec = timeout_sec
         self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
 
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
+        }
+
+    def _endpoint(self) -> str:
+        return f"{self.base_url}/{self.model_name}:generateContent"
+
     async def test_connection(self) -> ProviderHealthResponse:
         t0 = time.perf_counter()
         try:
-            url = f"{self.base_url}/{self.model_name}:generateContent?key={self.api_key}"
+            url = self._endpoint()
             payload = {
-                "contents": [{"role": "user", "parts": [{"text": "Ping. Respond with {\"status\": \"ok\"}"}]}],
+                "contents": [{"role": "user", "parts": [{"text": 'Ping. Respond with {"status": "ok"}'}]}],
                 "generationConfig": {
                     "temperature": 0.1,
                     "maxOutputTokens": 20,
@@ -51,7 +61,14 @@ class GeminiClient(BaseLLMClient):
                 },
             }
             async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
-                resp = await client.post(url, json=payload)
+                resp = await request_with_retry(
+                    client,
+                    "POST",
+                    url,
+                    headers=self._headers(),
+                    json=payload,
+                    max_attempts=2,
+                )
                 lat = (time.perf_counter() - t0) * 1000
 
                 if resp.status_code == 200:
@@ -67,21 +84,22 @@ class GeminiClient(BaseLLMClient):
                         message=f"Gemini authentication failed ({resp.status_code}): Invalid API key",
                     )
                 else:
+                    safe_body = redact_secrets(resp.text[:120])
                     return ProviderHealthResponse(
                         status="error",
                         latency_ms=round(lat, 1),
-                        message=f"Gemini API returned status {resp.status_code}: {resp.text[:100]}",
+                        message=f"Gemini API returned status {resp.status_code}: {safe_body}",
                     )
         except Exception as e:
             lat = (time.perf_counter() - t0) * 1000
             return ProviderHealthResponse(
                 status="unreachable",
                 latency_ms=round(lat, 1),
-                message=f"Gemini connection failed: {str(e)}",
+                message=f"Gemini connection failed: {redact_secrets(str(e))}",
             )
 
     async def generate_structured(self, system_prompt: str, user_prompt: str) -> str:
-        url = f"{self.base_url}/{self.model_name}:generateContent?key={self.api_key}"
+        url = self._endpoint()
         payload = {
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
             "systemInstruction": {"parts": [{"text": system_prompt}]},
@@ -92,10 +110,17 @@ class GeminiClient(BaseLLMClient):
             },
         }
         async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
-            resp = await client.post(url, json=payload)
+            resp = await request_with_retry(
+                client,
+                "POST",
+                url,
+                headers=self._headers(),
+                json=payload,
+                max_attempts=3,
+            )
             if resp.status_code != 200:
                 raise RuntimeError(
-                    f"Gemini API error ({resp.status_code}): {resp.text}"
+                    f"Gemini API error ({resp.status_code}): {redact_secrets(resp.text[:250])}"
                 )
             data = resp.json()
             candidates = data.get("candidates", [])
@@ -104,7 +129,7 @@ class GeminiClient(BaseLLMClient):
             parts = candidates[0].get("content", {}).get("parts", [])
             if not parts:
                 raise RuntimeError("Gemini candidate contains zero parts")
-            return parts[0].get("text", "")
+            return str(parts[0].get("text", ""))
 
 
 class LlamaCppClient(BaseLLMClient):
@@ -116,7 +141,8 @@ class LlamaCppClient(BaseLLMClient):
         max_tokens: int = 2048,
         timeout_sec: float = 60.0,
     ):
-        base = endpoint_url.rstrip("/")
+        validated = validate_endpoint_url(endpoint_url, allow_private_lan=True)
+        base = validated.rstrip("/")
         if not base.endswith("/v1"):
             self.completions_url = f"{base}/v1/chat/completions"
         else:
@@ -133,14 +159,20 @@ class LlamaCppClient(BaseLLMClient):
             payload = {
                 "model": self.model_name,
                 "messages": [
-                    {"role": "user", "content": "Ping. Respond with {\"status\": \"ok\"}"}
+                    {"role": "user", "content": 'Ping. Respond with {"status": "ok"}'}
                 ],
                 "temperature": 0.1,
                 "max_tokens": 20,
                 "response_format": {"type": "json_object"},
             }
             async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
-                resp = await client.post(self.completions_url, json=payload)
+                resp = await request_with_retry(
+                    client,
+                    "POST",
+                    self.completions_url,
+                    json=payload,
+                    max_attempts=2,
+                )
                 lat = (time.perf_counter() - t0) * 1000
 
                 if resp.status_code == 200:
@@ -150,17 +182,18 @@ class LlamaCppClient(BaseLLMClient):
                         message=f"Connected to local llama.cpp ({self.model_name}) in {lat:.1f}ms",
                     )
                 else:
+                    safe_body = redact_secrets(resp.text[:120])
                     return ProviderHealthResponse(
                         status="error",
                         latency_ms=round(lat, 1),
-                        message=f"llama.cpp server returned status {resp.status_code}: {resp.text[:100]}",
+                        message=f"llama.cpp server returned status {resp.status_code}: {safe_body}",
                     )
         except Exception as e:
             lat = (time.perf_counter() - t0) * 1000
             return ProviderHealthResponse(
                 status="unreachable",
                 latency_ms=round(lat, 1),
-                message=f"llama.cpp server unreachable at {self.completions_url}: {str(e)}",
+                message=f"llama.cpp server unreachable at {self.completions_url}: {redact_secrets(str(e))}",
             )
 
     async def generate_structured(self, system_prompt: str, user_prompt: str) -> str:
@@ -175,16 +208,22 @@ class LlamaCppClient(BaseLLMClient):
             "response_format": {"type": "json_object"},
         }
         async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
-            resp = await client.post(self.completions_url, json=payload)
+            resp = await request_with_retry(
+                client,
+                "POST",
+                self.completions_url,
+                json=payload,
+                max_attempts=3,
+            )
             if resp.status_code != 200:
                 raise RuntimeError(
-                    f"llama.cpp server error ({resp.status_code}): {resp.text}"
+                    f"llama.cpp server error ({resp.status_code}): {redact_secrets(resp.text[:250])}"
                 )
             data = resp.json()
             choices = data.get("choices", [])
             if not choices:
                 raise RuntimeError("llama.cpp returned zero choices")
-            return choices[0].get("message", {}).get("content", "")
+            return str(choices[0].get("message", {}).get("content", ""))
 
 
 def get_llm_client_for_config(
@@ -200,10 +239,13 @@ def get_llm_client_for_config(
     if provider_type == "gemini":
         key = raw_api_key
         if not key and api_key_encrypted:
-            try:
-                key = decrypt_token(api_key_encrypted)
-            except Exception:
-                key = ""
+            decrypted, dec_err = decrypt_token_safe(api_key_encrypted, context="gemini_api_key")
+            if dec_err:
+                raise ValueError(
+                    "Stored Gemini API key could not be decrypted with the current ENCRYPTION_KEY. "
+                    "Please re-enter your API key in Settings."
+                )
+            key = decrypted
         return GeminiClient(
             api_key=key or "",
             model_name=model_name or "gemini-2.5-flash",

@@ -1,18 +1,32 @@
 """User and Heart Rate Profile models."""
 
+from typing import TYPE_CHECKING
 import uuid
-from sqlalchemy import CheckConstraint, ForeignKey, Integer
+from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
+if TYPE_CHECKING:
+    from src.models.integration import IntegrationAccount
+    from src.models.voice_log import VoiceTranscriptionLog
+    from src.models.workout import WorkoutSession
+
 
 class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "users"
 
+    timezone: Mapped[str] = mapped_column(
+        String(64),
+        default="UTC",
+        server_default="UTC",
+        nullable=False,
+    )
+    passphrase_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Relationships
-    hr_profile: Mapped["UserHeartRateProfile"] = relationship(
+    hr_profile: Mapped["UserHeartRateProfile | None"] = relationship(
         "UserHeartRateProfile",
         back_populates="user",
         uselist=False,
@@ -39,8 +53,16 @@ class UserHeartRateProfile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "user_heart_rate_profiles"
     __table_args__ = (
         CheckConstraint(
-            "resting_hr > 30 AND max_hr < 240 AND resting_hr < max_hr",
+            "resting_hr >= 25 AND resting_hr < 150 AND max_hr > 120 AND max_hr < 240 AND resting_hr < max_hr",
             name="check_hr_bounds",
+        ),
+        CheckConstraint(
+            "zone1_min > 0 AND zone1_min < zone1_max AND zone1_max <= zone2_min "
+            "AND zone2_min < zone2_max AND zone2_max <= zone3_min "
+            "AND zone3_min < zone3_max AND zone3_max <= zone4_min "
+            "AND zone4_min < zone4_max AND zone4_max <= zone5_min "
+            "AND zone5_min < zone5_max",
+            name="check_hr_zones_ordered",
         ),
     )
 

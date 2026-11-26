@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from src.models.coaching import LLMProviderConfig
-from src.services.philosophy_service import PhilosophyService
 
 
 @pytest.mark.asyncio
@@ -27,7 +26,7 @@ async def test_ai_provider_creation_and_active_flag(db_session: AsyncSession, sa
 
     q = select(LLMProviderConfig).where(
         LLMProviderConfig.user_id == user.id,
-        LLMProviderConfig.is_active == True,
+        LLMProviderConfig.is_active.is_(True),
     )
     res = await db_session.execute(q)
     active_prov = res.scalars().first()

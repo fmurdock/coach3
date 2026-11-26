@@ -2,6 +2,8 @@
 
 import json
 from pathlib import Path
+import httpx
+import pytest
 from src.adapters.polar import PolarAdapter, parse_iso_duration
 
 
@@ -44,9 +46,6 @@ def test_normalize_polar_exercise_from_fixture():
     assert normalized.gps_route_points[0].longitude == -122.4194
     assert normalized.gps_route_points[0].altitude_m == 15.0
 
-
-import httpx
-import pytest
 
 @pytest.mark.asyncio
 async def test_polar_fetch_workouts_batch_204_no_content():
@@ -266,5 +265,100 @@ async def test_polar_fetch_workouts_batch_gpx_and_hr_zones():
         assert w.elevation_loss_m == 3.5
         assert "polar_zones" in w.raw_summary
         assert len(w.raw_summary["speed_samples"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_polar_deferred_commit_token_and_commit_batch():
+    """fetch_workouts_batch MUST NOT send PUT; commit_batch sends PUT."""
+    put_urls = []
+    v3_exercise = {
+        "id": 444555,
+        "start-time": "2026-11-21T07:25:48Z",
+        "duration": "PT10M",
+        "distance": 2000.0,
+        "sport": "RUNNING",
+    }
+
+    def mock_handler(request: httpx.Request):
+        url = str(request.url)
+        if request.method == "PUT":
+            put_urls.append(url)
+            return httpx.Response(200)
+        if url.endswith("/exercise-transactions") and request.method == "POST":
+            return httpx.Response(201, json={"transaction-id": 8888})
+        if url.endswith("/exercise-transactions/8888") and request.method == "GET":
+            return httpx.Response(
+                200,
+                json={"exercises": ["https://www.polaraccesslink.com/v3/users/1/exercise-transactions/8888/exercises/444555"]},
+            )
+        if url.endswith("/exercises/444555") and request.method == "GET":
+            return httpx.Response(200, json=v3_exercise)
+        if url.endswith("/exercises/444555/samples"):
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    adapter = PolarAdapter()
+    transport = httpx.MockTransport(mock_handler)
+    import unittest.mock as mock
+
+    real_async_client = httpx.AsyncClient
+    with mock.patch("httpx.AsyncClient", side_effect=lambda *a, **kw: real_async_client(transport=transport)):
+        result = await adapter.fetch_workouts_batch("tok", cursor={"user_id": "1"})
+        assert len(result.workouts) == 1
+        assert result.pending_commit_token is not None
+        assert result.pending_commit_token["transaction_id"] == 8888
+        assert result.pending_commit_token["tx_url"].endswith("/exercise-transactions")
+        assert put_urls == []  # Deferred!
+
+        await adapter.commit_batch("tok", result.pending_commit_token)
+        assert len(put_urls) == 1
+        assert put_urls[0].endswith("/exercise-transactions/8888")
+
+
+def test_polar_sport_mapping_and_missing_id():
+    adapter = PolarAdapter()
+    base = {
+        "id": 100,
+        "start-time": "2026-11-21T07:00:00Z",
+        "duration": "PT30M",
+        "distance": 10000.0,
+    }
+    assert adapter.normalize_polar_exercise({**base, "sport": "CYCLING"}).discipline == "erg_bike"
+    assert adapter.normalize_polar_exercise({**base, "sport": "INDOOR_CYCLING"}).discipline == "erg_bike"
+    assert adapter.normalize_polar_exercise({**base, "sport": "ROWING"}).discipline == "indoor_row"
+    assert adapter.normalize_polar_exercise({**base, "sport": "STRENGTH_TRAINING"}).discipline == "strength"
+    assert adapter.normalize_polar_exercise({**base, "sport": "RUNNING"}).discipline == "outdoor_run"
+
+    with pytest.raises(ValueError, match="missing required 'id'"):
+        adapter.normalize_polar_exercise({"start-time": "2026-11-21T07:00:00Z", "duration": "PT10M"})
+
+
+@pytest.mark.asyncio
+async def test_polar_propagates_http_errors():
+    def mock_handler(request: httpx.Request):
+        return httpx.Response(401, json={"error": "unauthorized"})
+
+    adapter = PolarAdapter()
+    transport = httpx.MockTransport(mock_handler)
+    import unittest.mock as mock
+
+    with mock.patch("httpx.AsyncClient", return_value=httpx.AsyncClient(transport=transport)):
+        with pytest.raises(httpx.HTTPStatusError) as exc_info:
+            await adapter.fetch_workouts_batch("bad_token", cursor={"user_id": "1"})
+        assert exc_info.value.response.status_code == 401
+
+
+def test_polar_gpx_defusedxml_rejects_xxe():
+    from src.adapters.polar import parse_gpx_points
+
+    xxe_payload = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE foo [
+  <!ENTITY xxe SYSTEM "file:///etc/passwd">
+]>
+<gpx version="1.1"><trk><trkseg><trkpt lat="1.0" lon="2.0"><name>&xxe;</name></trkpt></trkseg></trk></gpx>"""
+    points = parse_gpx_points(xxe_payload)
+    assert points == []
+
+
 
 

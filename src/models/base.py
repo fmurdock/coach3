@@ -1,10 +1,12 @@
-"""Base Declarative Model and timestamp mixins."""
+"""Base Declarative Model, dialect-safe JSON type, and timestamp mixins."""
 
 from datetime import datetime, timezone
 import uuid
-from sqlalchemy import DateTime
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import DateTime, JSON
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+JSON_TYPE = JSON().with_variant(JSONB, "postgresql")
 
 
 def utc_now() -> datetime:

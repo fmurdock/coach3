@@ -4,13 +4,15 @@ Handles retrospective workout critique (Analysis Mode) and periodized forward sc
 generation (Planning Mode) with dual-engine LLM steering and strict privacy scrubbing.
 """
 
-from datetime import date, datetime, timedelta, timezone
+import asyncio
+from datetime import datetime, timedelta, timezone
 import json
 import re
 from typing import Any, Dict, List, Optional
 import uuid
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import and_, desc, func, select, update
+from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -24,12 +26,78 @@ from src.models.coaching import (
 )
 from src.models.exercise import StrengthExercise
 from src.models.strength_set import StrengthSet
+from src.models.user import User
 from src.models.workout import WorkoutSession
 from src.schemas.coaching import LLMCritiqueOutput, LLMScheduleOutput
 from src.services.llm_client import BaseLLMClient, get_llm_client_for_config
 
 
+class CoachingBusyError(Exception):
+    """Raised when an AI analysis or schedule generation request is already in flight for this athlete."""
+
+
+_USER_INFLIGHT_LOCKS: dict[uuid.UUID, asyncio.Lock] = {}
+
+
+def _get_user_lock(user_id: uuid.UUID) -> asyncio.Lock:
+    lock = _USER_INFLIGHT_LOCKS.get(user_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _USER_INFLIGHT_LOCKS[user_id] = lock
+    return lock
+
+
+def _resolve_tz(tz_name: str | None) -> ZoneInfo:
+    try:
+        return ZoneInfo((tz_name or "UTC").strip())
+    except (ZoneInfoNotFoundError, KeyError, ValueError):
+        return ZoneInfo("UTC")
+
+
 class CoachingService:
+    @staticmethod
+    def validate_schedule_invariants(
+        parsed: LLMScheduleOutput,
+        horizon_days: int,
+        min_rest_days_per_week: int,
+    ) -> None:
+        """Enforce domain safety invariants on LLM-generated schedules before persistence."""
+        if not parsed.workouts:
+            raise ValueError("Generated schedule contains no workouts.")
+
+        seen_offsets: set[int] = set()
+        for item in parsed.workouts:
+            if not (0 <= item.day_offset < horizon_days):
+                raise ValueError(
+                    f"Invalid day_offset {item.day_offset} outside horizon 0..{horizon_days - 1}."
+                )
+            if item.day_offset in seen_offsets:
+                raise ValueError(f"Duplicate scheduled workout for day_offset {item.day_offset}.")
+            seen_offsets.add(item.day_offset)
+
+            if not (0 <= item.planned_duration_min <= 480):
+                raise ValueError(
+                    f"Planned duration {item.planned_duration_min} min exceeds allowed range 0..480."
+                )
+
+        # Verify minimum rest days per 7-day chunk (explicit 'rest' OR unscheduled day counts as rest)
+        by_offset = {item.day_offset: item for item in parsed.workouts}
+        num_weeks = max(1, (horizon_days + 6) // 7)
+        for wk in range(num_weeks):
+            chunk_start = wk * 7
+            chunk_end = min(horizon_days, chunk_start + 7)
+            chunk_len = chunk_end - chunk_start
+            if chunk_len < 7:
+                continue
+            rest_days = sum(
+                1
+                for d in range(chunk_start, chunk_end)
+                if (d not in by_offset) or (by_offset[d].discipline == "rest")
+            )
+            if rest_days < min_rest_days_per_week:
+                raise ValueError(
+                    f"Generated schedule violates minimum rest days ({rest_days} < {min_rest_days_per_week} in week {wk + 1})."
+                )
     @staticmethod
     def _extract_json_string(raw_text: str) -> str:
         """Strips markdown code fences and whitespace to extract raw JSON."""
@@ -75,9 +143,11 @@ class CoachingService:
 
     @staticmethod
     def build_analysis_system_prompt(philosophy: CoachingPhilosophy) -> str:
+        scrubbed_name = PrivacyScrubberService.scrub_text(philosophy.name)
+        scrubbed_notes = PrivacyScrubberService.scrub_text(philosophy.custom_context_notes)
         custom_notes = (
-            f"\nATHLETE MANUAL CONSTRAINTS & METHODOLOGY NOTES:\n{philosophy.custom_context_notes}\n"
-            if philosophy.custom_context_notes
+            f"\nATHLETE MANUAL CONSTRAINTS & METHODOLOGY NOTES:\n{scrubbed_notes}\n"
+            if scrubbed_notes
             else ""
         )
 
@@ -86,7 +156,7 @@ class CoachingService:
             "Evaluate the athlete's workout telemetry strictly against their active coaching philosophy "
             "and personal constraints.\n\n"
             "ACTIVE COACHING PHILOSOPHY:\n"
-            f"- Name: {philosophy.name}\n"
+            f"- Name: {scrubbed_name}\n"
             f"- Primary Modality: {philosophy.primary_modality}\n"
             f"- Target Zone 2 (Aerobic Base) Volume: {float(philosophy.target_zone2_pct)}%\n"
             f"- Max Weekly Volume Ramp Limit: {float(philosophy.max_weekly_volume_ramp_pct)}%\n"
@@ -116,9 +186,11 @@ class CoachingService:
         horizon_days: int,
         available_days_per_week: int,
     ) -> str:
+        scrubbed_name = PrivacyScrubberService.scrub_text(philosophy.name)
+        scrubbed_notes = PrivacyScrubberService.scrub_text(philosophy.custom_context_notes)
         custom_notes = (
-            f"\nATHLETE MANUAL CONSTRAINTS & METHODOLOGY NOTES:\n{philosophy.custom_context_notes}\n"
-            if philosophy.custom_context_notes
+            f"\nATHLETE MANUAL CONSTRAINTS & METHODOLOGY NOTES:\n{scrubbed_notes}\n"
+            if scrubbed_notes
             else ""
         )
 
@@ -126,7 +198,7 @@ class CoachingService:
             "You are an expert exercise physiologist, strength coach, and periodization specialist.\n"
             f"Synthesize an adaptive {horizon_days}-day training microcycle tailored to the athlete's target goal.\n\n"
             "ACTIVE COACHING PHILOSOPHY & CONSTRAINTS:\n"
-            f"- Name: {philosophy.name}\n"
+            f"- Name: {scrubbed_name}\n"
             f"- Primary Modality: {philosophy.primary_modality}\n"
             f"- Target Zone 2 (Aerobic Base) Volume: {float(philosophy.target_zone2_pct)}%\n"
             f"- Max Weekly Volume Ramp Limit: {float(philosophy.max_weekly_volume_ramp_pct)}%\n"
@@ -253,146 +325,173 @@ class CoachingService:
         provider_name: Optional[str] = None,
     ) -> CoachingCritique:
         """Evaluates workout session(s) against active philosophy and saves a CoachingCritique."""
-        if not philosophy:
-            philosophy = await self.get_active_philosophy(session, user_id)
+        lock = _get_user_lock(user_id)
+        if lock.locked():
+            raise CoachingBusyError("An AI coaching request is already in progress. Please wait for it to finish.")
 
-        if not llm_client:
-            llm_client, provider_name = await self.get_active_llm_client(session, user_id)
-        elif not provider_name:
-            provider_name = "custom"
+        async with lock:
+            if not philosophy:
+                philosophy = await self.get_active_philosophy(session, user_id)
 
-        # 1. Fetch workout session(s)
-        workouts: List[WorkoutSession] = []
-        if workout_session_id:
-            stmt = select(WorkoutSession).where(
-                and_(
-                    WorkoutSession.id == workout_session_id,
-                    WorkoutSession.user_id == user_id,
+            if not llm_client:
+                llm_client, provider_name = await self.get_active_llm_client(session, user_id)
+            elif not provider_name:
+                provider_name = "custom"
+
+            # 1. Fetch workout session(s)
+            workouts: List[WorkoutSession] = []
+            if workout_session_id:
+                stmt = select(WorkoutSession).where(
+                    and_(
+                        WorkoutSession.id == workout_session_id,
+                        WorkoutSession.user_id == user_id,
+                    )
                 )
-            )
-            res = await session.execute(stmt)
-            ws = res.scalar_one_or_none()
-            if ws:
-                workouts.append(ws)
-        elif start_date or end_date:
-            conditions = [WorkoutSession.user_id == user_id]
-            if start_date:
-                conditions.append(WorkoutSession.start_time_utc >= start_date)
-            if end_date:
-                conditions.append(WorkoutSession.start_time_utc <= end_date)
-            stmt = (
-                select(WorkoutSession)
-                .where(and_(*conditions))
-                .order_by(WorkoutSession.start_time_utc.asc())
-            )
-            res = await session.execute(stmt)
-            workouts = list(res.scalars().all())
-        else:
-            # Most recent workout session
-            stmt = (
-                select(WorkoutSession)
-                .where(WorkoutSession.user_id == user_id)
-                .order_by(WorkoutSession.start_time_utc.desc())
-                .limit(1)
-            )
-            res = await session.execute(stmt)
-            ws = res.scalar_one_or_none()
-            if ws:
-                workouts.append(ws)
+                res = await session.execute(stmt)
+                ws = res.scalar_one_or_none()
+                if ws:
+                    workouts.append(ws)
+            elif start_date or end_date:
+                conditions = [WorkoutSession.user_id == user_id]
+                if start_date:
+                    conditions.append(WorkoutSession.start_time_utc >= start_date)
+                if end_date:
+                    conditions.append(WorkoutSession.start_time_utc <= end_date)
+                stmt = (
+                    select(WorkoutSession)
+                    .where(and_(*conditions))
+                    .order_by(WorkoutSession.start_time_utc.asc())
+                )
+                res = await session.execute(stmt)
+                workouts = list(res.scalars().all())
+            else:
+                stmt = (
+                    select(WorkoutSession)
+                    .where(WorkoutSession.user_id == user_id)
+                    .order_by(WorkoutSession.start_time_utc.desc())
+                    .limit(1)
+                )
+                res = await session.execute(stmt)
+                ws = res.scalar_one_or_none()
+                if ws:
+                    workouts.append(ws)
 
-        if not workouts:
-            raise ValueError("No workout sessions found for the specified criteria.")
+            if not workouts:
+                raise ValueError("No workout sessions found for the specified criteria.")
 
-        # 2. Fetch associated strength sets if any
-        session_ids = [w.id for w in workouts]
-        strength_sets: List[Dict[str, Any]] = []
-        if session_ids:
-            stmt_sets = (
-                select(StrengthSet, StrengthExercise.canonical_name)
-                .join(StrengthExercise, StrengthSet.exercise_id == StrengthExercise.id)
-                .where(StrengthSet.workout_session_id.in_(session_ids))
-                .order_by(StrengthSet.set_index.asc())
-            )
-            res_sets = await session.execute(stmt_sets)
-            for s_set, ex_name in res_sets.all():
-                strength_sets.append({
-                    "exercise_name": ex_name,
-                    "set_index": s_set.set_index,
-                    "reps_completed": s_set.reps_completed,
-                    "weight": float(s_set.weight) if s_set.weight is not None else None,
-                    "weight_unit": s_set.weight_unit,
-                    "is_bodyweight": s_set.is_bodyweight,
-                    "added_weight": float(s_set.added_weight) if s_set.added_weight is not None else None,
-                    "rpe": float(s_set.rpe) if s_set.rpe is not None else None,
-                    "is_warmup": s_set.is_warmup,
+            # 2. Fetch associated strength sets if any
+            session_ids = [w.id for w in workouts]
+            strength_sets: List[Dict[str, Any]] = []
+            if session_ids:
+                stmt_sets = (
+                    select(StrengthSet, StrengthExercise.canonical_name)
+                    .join(StrengthExercise, StrengthSet.exercise_id == StrengthExercise.id)
+                    .where(StrengthSet.workout_session_id.in_(session_ids))
+                    .order_by(StrengthSet.set_index.asc())
+                )
+                res_sets = await session.execute(stmt_sets)
+                for s_set, ex_name in res_sets.all():
+                    strength_sets.append({
+                        "exercise_name": ex_name,
+                        "set_index": s_set.set_index,
+                        "reps_completed": s_set.reps_completed,
+                        "weight": float(s_set.weight) if s_set.weight is not None else None,
+                        "weight_unit": s_set.weight_unit,
+                        "is_bodyweight": s_set.is_bodyweight,
+                        "added_weight": float(s_set.added_weight) if s_set.added_weight is not None else None,
+                        "rpe": float(s_set.rpe) if s_set.rpe is not None else None,
+                        "is_warmup": s_set.is_warmup,
+                    })
+
+            # 3. Build scrubbed telemetry context (Constitution Principle I)
+            raw_workout_dicts = []
+            for w in workouts:
+                raw_workout_dicts.append({
+                    "discipline": w.discipline,
+                    "title": w.title,
+                    "start_time_utc": w.start_time_utc.isoformat() if w.start_time_utc else None,
+                    "total_duration_sec": w.total_duration_sec,
+                    "active_duration_sec": w.active_duration_sec,
+                    "total_distance_m": float(w.total_distance_m) if w.total_distance_m is not None else None,
+                    "total_calories": w.total_calories,
+                    "avg_heart_rate": w.avg_heart_rate,
+                    "max_heart_rate": w.max_heart_rate,
+                    "zone1_duration_sec": w.zone1_duration_sec,
+                    "zone2_duration_sec": w.zone2_duration_sec,
+                    "zone3_duration_sec": w.zone3_duration_sec,
+                    "zone4_duration_sec": w.zone4_duration_sec,
+                    "zone5_duration_sec": w.zone5_duration_sec,
+                    "avg_pace_sec_per_km": w.avg_pace_sec_per_km,
+                    "avg_power_watts": w.avg_power_watts,
+                    "avg_split_sec_per_500m": w.avg_split_sec_per_500m,
+                    "user_notes": w.user_notes,
                 })
 
-        # 3. Build scrubbed telemetry context (Constitution Principle I)
-        raw_workout_dicts = []
-        for w in workouts:
-            raw_workout_dicts.append({
-                "discipline": w.discipline,
-                "title": w.title,
-                "start_time_utc": w.start_time_utc.isoformat() if w.start_time_utc else None,
-                "total_duration_sec": w.total_duration_sec,
-                "active_duration_sec": w.active_duration_sec,
-                "total_distance_m": float(w.total_distance_m) if w.total_distance_m is not None else None,
-                "total_calories": w.total_calories,
-                "avg_heart_rate": w.avg_heart_rate,
-                "max_heart_rate": w.max_heart_rate,
-                "zone1_duration_sec": w.zone1_duration_sec,
-                "zone2_duration_sec": w.zone2_duration_sec,
-                "zone3_duration_sec": w.zone3_duration_sec,
-                "zone4_duration_sec": w.zone4_duration_sec,
-                "zone5_duration_sec": w.zone5_duration_sec,
-                "avg_pace_sec_per_km": w.avg_pace_sec_per_km,
-                "avg_power_watts": w.avg_power_watts,
-                "avg_split_sec_per_500m": w.avg_split_sec_per_500m,
-                "user_notes": w.user_notes,
-            })
+            scrubbed_context = PrivacyScrubberService.scrub_coaching_context(
+                athlete_context={},
+                recent_workouts=raw_workout_dicts,
+                recent_strength_sets=strength_sets,
+                philosophy={
+                    "name": philosophy.name,
+                    "target_zone2_pct": float(philosophy.target_zone2_pct),
+                    "max_weekly_volume_ramp_pct": float(philosophy.max_weekly_volume_ramp_pct),
+                },
+            )
 
-        scrubbed_context = PrivacyScrubberService.scrub_coaching_context(
-            athlete_context={},
-            recent_workouts=raw_workout_dicts,
-            recent_strength_sets=strength_sets,
-            philosophy={
-                "name": philosophy.name,
-                "target_zone2_pct": float(philosophy.target_zone2_pct),
-                "max_weekly_volume_ramp_pct": float(philosophy.max_weekly_volume_ramp_pct),
-            },
-        )
+            # 4. Generate structured critique via LLM
+            system_prompt = self.build_analysis_system_prompt(philosophy)
+            user_prompt = f"ATHLETIC TELEMETRY PAYLOAD:\n{json.dumps(scrubbed_context, indent=2)}"
 
-        # 4. Generate structured critique via LLM
-        system_prompt = self.build_analysis_system_prompt(philosophy)
-        user_prompt = f"ATHLETIC TELEMETRY PAYLOAD:\n{json.dumps(scrubbed_context, indent=2)}"
+            raw_response = await llm_client.generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
 
-        raw_response = await llm_client.generate_structured(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-        )
+            parsed = self.parse_critique_response(raw_response)
 
-        parsed = self.parse_critique_response(raw_response)
+            # 5. Persist critique
+            critique = CoachingCritique(
+                id=uuid.uuid4(),
+                user_id=user_id,
+                workout_session_id=workouts[0].id if len(workouts) == 1 else None,
+                start_date=workouts[0].start_time_utc if workouts else None,
+                end_date=workouts[-1].start_time_utc if workouts else None,
+                philosophy_id=philosophy.id,
+                provider_used=provider_name,
+                adherence_score=parsed.adherence_score,
+                summary_markdown=parsed.summary_markdown,
+                adherence_details=parsed.adherence_details,
+                strain_assessment=parsed.strain_assessment,
+                recommendations=parsed.recommendations,
+            )
+            session.add(critique)
+            await session.flush()
+            await session.refresh(critique)
 
-        # 5. Persist critique
-        critique = CoachingCritique(
-            id=uuid.uuid4(),
-            user_id=user_id,
-            workout_session_id=workouts[0].id if len(workouts) == 1 else None,
-            start_date=workouts[0].start_time_utc if workouts else None,
-            end_date=workouts[-1].start_time_utc if workouts else None,
-            philosophy_id=philosophy.id,
-            provider_used=provider_name,
-            adherence_score=parsed.adherence_score,
-            summary_markdown=parsed.summary_markdown,
-            adherence_details=parsed.adherence_details,
-            strain_assessment=parsed.strain_assessment,
-            recommendations=parsed.recommendations,
-        )
-        session.add(critique)
-        await session.commit()
-        await session.refresh(critique)
+            return critique
 
-        return critique
+    @staticmethod
+    def calculate_baseline_weekly_minutes(
+        recent_workouts: List[WorkoutSession],
+        tz_name: str = "UTC",
+    ) -> float:
+        """Compute baseline weekly duration using actual active ISO weeks (not hardcoded /4)."""
+        if not recent_workouts:
+            return 0.0
+        tz = _resolve_tz(tz_name)
+        active_weeks: set[tuple[int, int]] = set()
+        total_sec = 0.0
+        for w in recent_workouts:
+            total_sec += float(w.total_duration_sec or 0.0)
+            dt = w.start_time_utc
+            if dt:
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                local_d = dt.astimezone(tz).date()
+                iso = local_d.isocalendar()
+                active_weeks.add((iso[0], iso[1]))
+        weeks_divisor = max(1, len(active_weeks))
+        return round((total_sec / float(weeks_divisor)) / 60.0, 1)
 
     async def generate_forward_plan(
         self,
@@ -404,123 +503,141 @@ class CoachingService:
         philosophy: Optional[CoachingPhilosophy] = None,
         llm_client: Optional[BaseLLMClient] = None,
         provider_name: Optional[str] = None,
+        tz_name: Optional[str] = None,
     ) -> TrainingSchedulePlan:
         """Synthesizes periodized forward microcycle plan and discrete ScheduledWorkout entities."""
-        if not philosophy:
-            philosophy = await self.get_active_philosophy(session, user_id)
+        lock = _get_user_lock(user_id)
+        if lock.locked():
+            raise CoachingBusyError("An AI coaching request is already in progress. Please wait for it to finish.")
 
-        if not llm_client:
-            llm_client, provider_name = await self.get_active_llm_client(session, user_id)
-        elif not provider_name:
-            provider_name = "custom"
+        async with lock:
+            if not philosophy:
+                philosophy = await self.get_active_philosophy(session, user_id)
 
-        # 1. Fetch recent 28 days of workout history to establish baseline volume
-        now = datetime.now(timezone.utc)
-        since_date = now - timedelta(days=28)
-        stmt = (
-            select(WorkoutSession)
-            .where(
-                and_(
-                    WorkoutSession.user_id == user_id,
-                    WorkoutSession.start_time_utc >= since_date,
+            if not llm_client:
+                llm_client, provider_name = await self.get_active_llm_client(session, user_id)
+            elif not provider_name:
+                provider_name = "custom"
+
+            if tz_name is None:
+                user_row = await session.get(User, user_id)
+                tz_name = (user_row.timezone if user_row else None) or "UTC"
+            tz = _resolve_tz(tz_name)
+
+            # 1. Fetch recent 28 days of workout history to establish baseline volume
+            now = datetime.now(timezone.utc)
+            since_date = now - timedelta(days=28)
+            stmt = (
+                select(WorkoutSession)
+                .where(
+                    and_(
+                        WorkoutSession.user_id == user_id,
+                        WorkoutSession.status == "active",
+                        WorkoutSession.start_time_utc >= since_date,
+                    )
                 )
+                .order_by(WorkoutSession.start_time_utc.desc())
             )
-            .order_by(WorkoutSession.start_time_utc.desc())
-        )
-        res = await session.execute(stmt)
-        recent_workouts = list(res.scalars().all())
+            res = await session.execute(stmt)
+            recent_workouts = list(res.scalars().all())
 
-        total_recent_sec = sum(w.total_duration_sec or 0 for w in recent_workouts)
-        avg_weekly_duration_min = round((total_recent_sec / 4.0) / 60.0, 1)
+            avg_weekly_duration_min = self.calculate_baseline_weekly_minutes(
+                recent_workouts, tz_name=tz_name
+            )
 
-        history_summary = {
-            "historical_window_days": 28,
-            "total_workouts_completed": len(recent_workouts),
-            "baseline_avg_weekly_duration_min": avg_weekly_duration_min,
-            "recent_disciplines": list(set(w.discipline for w in recent_workouts)),
-        }
+            history_summary = {
+                "historical_window_days": 28,
+                "total_workouts_completed": len(recent_workouts),
+                "baseline_avg_weekly_duration_min": avg_weekly_duration_min,
+                "recent_disciplines": list(set(w.discipline for w in recent_workouts)),
+            }
 
-        # 2. Build prompts
-        system_prompt = self.build_planning_system_prompt(
-            philosophy=philosophy,
-            horizon_days=horizon_days,
-            available_days_per_week=available_days_per_week,
-        )
+            # 2. Build prompts
+            system_prompt = self.build_planning_system_prompt(
+                philosophy=philosophy,
+                horizon_days=horizon_days,
+                available_days_per_week=available_days_per_week,
+            )
 
-        user_prompt = (
-            f"TARGET GOAL: {target_goal}\n"
-            f"HORIZON DAYS: {horizon_days}\n"
-            f"AVAILABLE TRAINING DAYS PER WEEK: {available_days_per_week}\n"
-            f"BASELINE HISTORICAL VOLUME:\n{json.dumps(history_summary, indent=2)}"
-        )
+            scrubbed_goal = PrivacyScrubberService.scrub_text(target_goal)
+            user_prompt = (
+                f"TARGET GOAL: {scrubbed_goal}\n"
+                f"HORIZON DAYS: {horizon_days}\n"
+                f"AVAILABLE TRAINING DAYS PER WEEK: {available_days_per_week}\n"
+                f"BASELINE HISTORICAL VOLUME:\n{json.dumps(history_summary, indent=2)}"
+            )
 
-        # 3. LLM Generation
-        raw_response = await llm_client.generate_structured(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-        )
+            # 3. LLM Generation + Invariant Validation
+            raw_response = await llm_client.generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
 
-        parsed = self.parse_schedule_response(raw_response)
+            parsed = self.parse_schedule_response(raw_response)
+            self.validate_schedule_invariants(
+                parsed,
+                horizon_days=horizon_days,
+                min_rest_days_per_week=int(philosophy.min_rest_days_per_week),
+            )
 
-        # 4. Compute microcycle date boundaries
-        today = date.today()
-        start_date = today
-        end_date = today + timedelta(days=horizon_days - 1)
+            # 4. Compute microcycle date boundaries in athlete's local IANA timezone
+            today = now.astimezone(tz).date()
+            start_date = today
+            end_date = today + timedelta(days=horizon_days - 1)
 
-        # 5. Supersede any existing active plans for this user
-        stmt_supersede = (
-            update(TrainingSchedulePlan)
-            .where(
-                and_(
-                    TrainingSchedulePlan.user_id == user_id,
-                    TrainingSchedulePlan.status == "active",
+            # 5. Supersede any existing active plans for this user
+            stmt_supersede = (
+                update(TrainingSchedulePlan)
+                .where(
+                    and_(
+                        TrainingSchedulePlan.user_id == user_id,
+                        TrainingSchedulePlan.status == "active",
+                    )
                 )
+                .values(status="superseded")
             )
-            .values(status="superseded")
-        )
-        await session.execute(stmt_supersede)
+            await session.execute(stmt_supersede)
 
-        # 6. Save new plan
-        plan = TrainingSchedulePlan(
-            id=uuid.uuid4(),
-            user_id=user_id,
-            philosophy_id=philosophy.id,
-            target_goal=target_goal,
-            start_date=start_date,
-            end_date=end_date,
-            horizon_days=horizon_days,
-            summary_markdown=parsed.summary_markdown,
-            status="active",
-        )
-        session.add(plan)
-        await session.flush()
-
-        # 7. Create ScheduledWorkout items
-        for item in parsed.workouts:
-            workout_date = start_date + timedelta(days=item.day_offset)
-            scheduled = ScheduledWorkout(
+            # 6. Save new plan
+            plan = TrainingSchedulePlan(
                 id=uuid.uuid4(),
-                plan_id=plan.id,
-                target_date=workout_date,
-                discipline=item.discipline,
-                title=item.title,
-                planned_duration_min=item.planned_duration_min,
-                target_distance_m=item.target_distance_m,
-                target_zone=item.target_zone,
-                target_rpe=item.target_rpe,
-                strength_exercises=item.strength_exercises,
-                notes=item.notes,
-                is_completed=False,
+                user_id=user_id,
+                philosophy_id=philosophy.id,
+                target_goal=target_goal,
+                start_date=start_date,
+                end_date=end_date,
+                horizon_days=horizon_days,
+                summary_markdown=parsed.summary_markdown,
+                status="active",
             )
-            session.add(scheduled)
+            session.add(plan)
+            await session.flush()
 
-        await session.commit()
+            # 7. Create ScheduledWorkout items
+            for item in parsed.workouts:
+                workout_date = start_date + timedelta(days=item.day_offset)
+                scheduled = ScheduledWorkout(
+                    id=uuid.uuid4(),
+                    plan_id=plan.id,
+                    target_date=workout_date,
+                    discipline=item.discipline,
+                    title=item.title,
+                    planned_duration_min=item.planned_duration_min,
+                    target_distance_m=item.target_distance_m,
+                    target_zone=item.target_zone,
+                    target_rpe=item.target_rpe,
+                    strength_exercises=item.strength_exercises,
+                    notes=item.notes,
+                    is_completed=False,
+                )
+                session.add(scheduled)
 
-        # Refresh plan with scheduled workouts loaded
-        stmt_load = (
-            select(TrainingSchedulePlan)
-            .options(selectinload(TrainingSchedulePlan.scheduled_workouts))
-            .where(TrainingSchedulePlan.id == plan.id)
-        )
-        res_load = await session.execute(stmt_load)
-        return res_load.scalar_one()
+            await session.flush()
+
+            stmt_load = (
+                select(TrainingSchedulePlan)
+                .options(selectinload(TrainingSchedulePlan.scheduled_workouts))
+                .where(TrainingSchedulePlan.id == plan.id)
+            )
+            res_load = await session.execute(stmt_load)
+            return res_load.scalar_one()

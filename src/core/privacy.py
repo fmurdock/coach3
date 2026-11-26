@@ -1,34 +1,58 @@
 """Privacy and Data Sovereignty Scrubber Service (Constitution Principle I).
 
-Ensures 100% of PII (names, emails, user IDs) and raw GPS route coordinates
-are stripped before transmitting prompt contexts to external cloud LLM providers.
+Ensures 100% of PII (names, emails, phones, IPs, custom scrub terms) and raw GPS
+route coordinates are stripped before transmitting prompt contexts to external cloud LLM providers.
 """
 
 import re
 from typing import Any, Dict, List, Optional
 
+from src.core.config import settings
+
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
-IP_REGEX = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+IPV4_REGEX = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+IPV6_REGEX = re.compile(
+    r"(?<![0-9a-fA-F:])(?:[0-9a-fA-F]{1,4}:){1,7}:(?:[0-9a-fA-F]{1,4})?"
+    r"|(?<![0-9a-fA-F:])(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}(?![0-9a-fA-F:])"
+)
+PHONE_REGEX = re.compile(
+    r"(?<!\d)(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}(?!\d)"
+)
+# Decimal GPS coordinate pairs like "37.7749, -122.4194" or "lat: 37.7749 lon: -122.4194"
+GPS_PAIR_REGEX = re.compile(
+    r"(?<!\d)-?(?:[1-8]?\d(?:\.\d{3,})|90(?:\.0{3,}))\s*[,;/]\s*-?(?:1[0-7]\d(?:\.\d{3,})|[1-9]?\d(?:\.\d{3,})|180(?:\.0{3,}))(?!\d)"
+)
 
 
 class PrivacyScrubberService:
     @staticmethod
-    def scrub_text(text: Optional[str]) -> str:
-        """Removes emails, IP addresses, and obvious identifying tokens."""
+    def scrub_text(text: Optional[str], extra_terms: Optional[List[str]] = None) -> str:
+        """Removes emails, IPv4/IPv6 addresses, phone numbers, raw GPS coordinates, and custom scrub terms."""
         if not text:
             return ""
         scrubbed = EMAIL_REGEX.sub("[EMAIL_REDACTED]", text)
-        scrubbed = IP_REGEX.sub("[IP_REDACTED]", scrubbed)
+        scrubbed = IPV4_REGEX.sub("[IP_REDACTED]", scrubbed)
+        scrubbed = IPV6_REGEX.sub("[IP_REDACTED]", scrubbed)
+        scrubbed = PHONE_REGEX.sub("[PHONE_REDACTED]", scrubbed)
+        scrubbed = GPS_PAIR_REGEX.sub("[GPS_REDACTED]", scrubbed)
+
+        terms = list(settings.scrub_terms_list)
+        if extra_terms:
+            terms.extend(extra_terms)
+        for term in terms:
+            cleaned = term.strip()
+            if cleaned:
+                scrubbed = re.sub(re.escape(cleaned), "[PII_REDACTED]", scrubbed, flags=re.IGNORECASE)
+
         return scrubbed.strip()
 
     @classmethod
     def scrub_workout_context(cls, workout_dict: Dict[str, Any]) -> Dict[str, Any]:
         """Scrubs a workout session dictionary into an anonymous athletic telemetry payload.
-        
+
         Explicitly removes: user_id, user_name, user_email, gps_route, location, coordinates.
         Retains strictly physical training metrics: discipline, duration, zones, distance, pace, power.
         """
-        # Whitelisted athletic fields
         allowed_keys = {
             "discipline",
             "title",
@@ -95,7 +119,7 @@ class PrivacyScrubberService:
         scrubbed_philosophy = None
         if philosophy:
             scrubbed_philosophy = {
-                "name": philosophy.get("name"),
+                "name": cls.scrub_text(philosophy.get("name")),
                 "target_zone2_pct": philosophy.get("target_zone2_pct"),
                 "max_weekly_volume_ramp_pct": philosophy.get("max_weekly_volume_ramp_pct"),
                 "max_rpe_threshold": philosophy.get("max_rpe_threshold"),

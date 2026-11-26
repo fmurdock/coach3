@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db
 from src.main import app
-from src.models import StrengthSet, VoiceTranscriptionLog, WorkoutSession
+from src.models import StrengthSet, VoiceTranscriptionLog
 
 
 @pytest.mark.asyncio
@@ -237,6 +237,103 @@ async def test_gym_ui_endpoint():
         resp = await client.get("/gym")
         assert resp.status_code == 200
         assert "Coach3 — Gym Mode Voice Logger" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_gym_commit_after_seed_sample_workouts(db_session: AsyncSession):
+    """Committing Bench Press after SeedService.seed_sample_workouts() must succeed with unified UUIDv5."""
+    from src.services.seed_service import SeedService
+
+    await SeedService.seed_sample_workouts(db_session)
+
+    app.dependency_overrides[get_db] = lambda: db_session
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        sess_resp = await client.get("/api/v1/gym/sessions/active")
+        assert sess_resp.status_code == 200
+        session_id = sess_resp.json()["id"]
+
+        parse_resp = await client.post("/api/v1/gym/parse", json={"transcript": "bench press 225 lbs 3x5"})
+        assert parse_resp.status_code == 200
+        parsed = parse_resp.json()
+
+        commit_resp = await client.post(
+            f"/api/v1/gym/sessions/{session_id}/sets",
+            json={
+                "idempotency_key": str(uuid.uuid4()),
+                "raw_transcript": parsed["raw_transcript"],
+                "confidence_score": parsed["confidence_score"],
+                "sets": parsed["parsed_sets"],
+            },
+        )
+        assert commit_resp.status_code == 201
+        assert len(commit_resp.json()) == 3
+
+
+@pytest.mark.asyncio
+async def test_gym_multi_1set_candidates_prefix_idempotency_voice_diff_and_list_sets(db_session: AsyncSession):
+    """Tests two 1-set candidates in one request, prefix-similar keys (key_1 vs key_10),
+    edited exercise name resolution, distinct parsed_json vs final_confirmed_json, and GET /sessions/{id}/sets."""
+    app.dependency_overrides[get_db] = lambda: db_session
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        sess_resp = await client.get("/api/v1/gym/sessions/active")
+        session_id = sess_resp.json()["id"]
+
+        # 1. Two 1-set candidates in a single submission with key_10 first
+        r1 = await client.post(
+            f"/api/v1/gym/sessions/{session_id}/sets",
+            json={
+                "idempotency_key": "key_10",
+                "sets": [
+                    {"exercise_name": "Barbell Bench Press", "sets": 1, "reps": 5, "weight": 225.0},
+                    {"exercise_name": "Barbell Back Squat", "sets": 1, "reps": 5, "weight": 315.0},
+                ],
+            },
+        )
+        assert r1.status_code == 201
+        assert len(r1.json()) == 2
+
+        # 2. Prefix-similar key_1 MUST NOT collide with key_10!
+        r2 = await client.post(
+            f"/api/v1/gym/sessions/{session_id}/sets",
+            json={
+                "idempotency_key": "key_1",
+                "raw_transcript": "1x5 bench at 205",
+                "was_edited": True,
+                "original_parsed_sets": [
+                    {"exercise_name": "Barbell Bench Press", "sets": 1, "reps": 5, "weight": 205.0},
+                ],
+                "sets": [
+                    # Edited exercise name with exercise_id=None -> should resolve to Deadlift
+                    {"exercise_id": None, "exercise_name": "Barbell Deadlift", "sets": 1, "reps": 5, "weight": 275.0},
+                ],
+            },
+        )
+        assert r2.status_code == 201
+        saved_r2 = r2.json()
+        assert len(saved_r2) == 1
+        assert saved_r2[0]["exercise_name"] == "Barbell Deadlift"
+        assert saved_r2[0]["weight"] == 275.0
+
+        # 3. Verify VoiceTranscriptionLog preserves distinct parsed_json vs final_confirmed_json
+        v_log = (
+            await db_session.execute(
+                select(VoiceTranscriptionLog).where(VoiceTranscriptionLog.workout_session_id == uuid.UUID(session_id))
+            )
+        ).scalars().first()
+        assert v_log is not None
+        assert v_log.was_edited is True
+        assert v_log.parsed_json[0]["exercise_name"] == "Barbell Bench Press"
+        assert v_log.final_confirmed_json[0]["exercise_name"] == "Barbell Deadlift"
+
+        # 4. GET /sessions/{session_id}/sets returns all 3 sets ordered by set_index
+        list_resp = await client.get(f"/api/v1/gym/sessions/{session_id}/sets")
+        assert list_resp.status_code == 200
+        all_sets = list_resp.json()
+        assert len(all_sets) == 3
+        assert [s["set_index"] for s in all_sets] == [1, 2, 3]
+
 
 
 

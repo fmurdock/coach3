@@ -1,10 +1,11 @@
-"""Polar AccessLink API adapter for outdoor running workouts."""
+"""Polar AccessLink API adapter for outdoor running and multi-sport workouts."""
 
 import base64
 from datetime import datetime, timedelta, timezone
+import logging
 import re
 from typing import Any
-import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as DefusedET
 import httpx
 
 from src.adapters.base import (
@@ -16,16 +17,35 @@ from src.adapters.base import (
     SyncBatchResult,
 )
 from src.core.config import settings
+from src.core.http_client import request_with_retry
+from src.core.logging import redact_secrets
+
+logger = logging.getLogger(__name__)
+
+
+def map_polar_sport_to_discipline(sport: str | None, detailed_sport: str | None = None) -> tuple[str, str]:
+    """Map Polar sport strings to canonical Coach3 discipline and display label."""
+    combined = f"{sport or ''} {detailed_sport or ''}".upper()
+    if any(k in combined for k in ("ROWING", "INDOOR_ROWING")):
+        return "indoor_row", "Row"
+    if any(k in combined for k in ("CYCLING", "BIKING", "SPINNING", "INDOOR_CYCLING")):
+        return "erg_bike", "Ride"
+    if any(k in combined for k in ("STRENGTH", "WEIGHT", "CROSSFIT", "GYM", "CALISTHENICS")):
+        return "strength", "Strength"
+    if any(k in combined for k in ("RUN", "JOG", "TRAIL", "TREADMILL", "WALK", "HIK")) or not combined.strip():
+        return "outdoor_run", "Run"
+    logger.warning("Unmapped Polar sport '%s' ('%s'); falling back to outdoor_run", sport, detailed_sport)
+    return "outdoor_run", "Workout"
 
 
 def parse_gpx_points(gpx_xml: str, start_time_utc: datetime | None = None) -> list[dict[str, Any]]:
-    """Parse standard GPX XML trackpoints into coordinate dicts with elapsed_sec, lat, lon, altitude."""
+    """Safely parse GPX XML trackpoints using defusedxml into coordinate dicts."""
     if not gpx_xml or "<trkpt" not in gpx_xml:
         return []
 
     try:
-        root = ET.fromstring(gpx_xml)
-    except ET.ParseError:
+        root = DefusedET.fromstring(gpx_xml)
+    except Exception:
         return []
 
     points: list[dict[str, Any]] = []
@@ -135,7 +155,7 @@ class PolarAdapter(BaseIngestionAdapter):
     """Client for Polar AccessLink API."""
 
     AUTH_URL = "https://flow.polar.com/oauth2/authorization"
-    TOKEN_URL = "https://polarremote.com/v2/oauth2/token"
+    TOKEN_URL = "https://polarremote.com/v2/oauth2/token"  # noqa: S105
     BASE_URL = "https://www.polaraccesslink.com/v3"
 
     def __init__(
@@ -174,12 +194,11 @@ class PolarAdapter(BaseIngestionAdapter):
         }
 
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(self.TOKEN_URL, headers=headers, data=data)
+            resp = await request_with_retry(client, "POST", self.TOKEN_URL, headers=headers, data=data)
             resp.raise_for_status()
             return resp.json()
 
     async def refresh_access_token(self, refresh_token: str) -> dict[str, Any]:
-        # Polar tokens are typically long-lived user tokens, but we implement standard OAuth refresh
         credentials = f"{self.client_id}:{self.client_secret}"
         encoded_auth = base64.b64encode(credentials.encode()).decode()
 
@@ -194,7 +213,7 @@ class PolarAdapter(BaseIngestionAdapter):
         }
 
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(self.TOKEN_URL, headers=headers, data=data)
+            resp = await request_with_retry(client, "POST", self.TOKEN_URL, headers=headers, data=data)
             resp.raise_for_status()
             return resp.json()
 
@@ -207,7 +226,7 @@ class PolarAdapter(BaseIngestionAdapter):
         url = f"{self.BASE_URL}/users/{user_id}" if user_id else f"{self.BASE_URL}/users"
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, headers=headers)
+                resp = await request_with_retry(client, "GET", url, headers=headers, max_attempts=2)
                 if resp.status_code in (200, 201):
                     data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
                     first_name = data.get("first-name")
@@ -242,7 +261,7 @@ class PolarAdapter(BaseIngestionAdapter):
                 "is_connected": False,
                 "status": "error",
                 "athlete_name": None,
-                "error": str(exc),
+                "error": redact_secrets(str(exc)),
             }
 
     def normalize_polar_exercise(
@@ -252,9 +271,17 @@ class PolarAdapter(BaseIngestionAdapter):
         laps_data: list[dict[str, Any]] | None = None,
     ) -> NormalizedWorkout:
         """Map raw Polar exercise JSON to canonical NormalizedWorkout entity."""
-        ext_id = str(exercise_data.get("id"))
+        raw_id = exercise_data.get("id")
+        if raw_id is None or str(raw_id).strip() == "":
+            raise ValueError("Polar exercise payload missing required 'id' field.")
+        ext_id = str(raw_id).strip()
+
+        discipline, label = map_polar_sport_to_discipline(
+            exercise_data.get("sport"),
+            exercise_data.get("detailed-sport-info") or exercise_data.get("detailed_sport_info"),
+        )
         device = exercise_data.get("device", "Polar Watch")
-        title = f"Polar Run - {device}"
+        title = f"Polar {label} - {device}"
 
         start_time_str = exercise_data.get("start-time") or exercise_data.get("start_time")
         offset_min = exercise_data.get("start-time-utc-offset")
@@ -272,7 +299,6 @@ class PolarAdapter(BaseIngestionAdapter):
         duration_sec = parse_iso_duration(exercise_data.get("duration", 0))
         distance_m = float(exercise_data.get("distance", 0.0))
 
-        # Pace calculation in sec/km
         avg_pace = None
         if distance_m > 0 and duration_sec > 0:
             avg_pace = duration_sec / (distance_m / 1000.0)
@@ -285,13 +311,11 @@ class PolarAdapter(BaseIngestionAdapter):
         elevation_loss = exercise_data.get("descent")
         calories = exercise_data.get("calories")
 
-        # Parse telemetry streams
         hr_samples: list[NormalizedHeartRateSample] = []
         gps_points: list[NormalizedGPSPoint] = []
         exercise_summary = dict(exercise_data)
 
         if samples_data:
-            # HR samples
             hr_list = samples_data.get("heart_rate") or samples_data.get("heart-rate") or []
             for sample in hr_list:
                 sec = float(sample.get("elapsed_sec", sample.get("elapsed-sec", 0)))
@@ -304,11 +328,9 @@ class PolarAdapter(BaseIngestionAdapter):
                     )
                 )
 
-            # Speed samples
             if "speed" in samples_data and samples_data["speed"]:
                 exercise_summary["speed_samples"] = samples_data["speed"]
 
-            # GPS route points
             coord_list = samples_data.get("coordinates") or []
             for pt in coord_list:
                 sec = float(pt.get("elapsed_sec", pt.get("elapsed-sec", 0)))
@@ -326,7 +348,6 @@ class PolarAdapter(BaseIngestionAdapter):
                     )
                 )
 
-        # Parse splits / laps
         splits: list[NormalizedSplit] = []
         raw_laps = laps_data or exercise_data.get("laps") or []
         for idx, lap in enumerate(raw_laps, start=1):
@@ -355,7 +376,7 @@ class PolarAdapter(BaseIngestionAdapter):
         return NormalizedWorkout(
             provider="polar",
             external_id=ext_id,
-            discipline="outdoor_run",
+            discipline=discipline,
             title=title,
             start_time_utc=start_time_utc,
             local_timezone="UTC",
@@ -382,16 +403,35 @@ class PolarAdapter(BaseIngestionAdapter):
             "Accept": "application/json",
         }
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
+            resp = await request_with_retry(
+                client,
+                "POST",
                 f"{self.BASE_URL}/users",
                 headers=headers,
                 json={"member-id": member_id},
             )
-            # 200/201 = registered, 409 = already registered
             if resp.status_code in (200, 201, 409):
                 return resp.json() if resp.status_code in (200, 201) else None
             resp.raise_for_status()
             return resp.json()
+
+    async def commit_batch(
+        self,
+        access_token: str,
+        commit_token: dict[str, Any],
+    ) -> None:
+        """Commit a Polar AccessLink exercise transaction ONLY after local DB persistence succeeds."""
+        tx_url = commit_token.get("tx_url")
+        transaction_id = commit_token.get("transaction_id")
+        if not tx_url or not transaction_id:
+            return
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await request_with_retry(client, "PUT", f"{tx_url}/{transaction_id}", headers=headers)
+            resp.raise_for_status()
 
     async def fetch_workouts_batch(
         self,
@@ -399,7 +439,7 @@ class PolarAdapter(BaseIngestionAdapter):
         cursor: dict[str, Any] | None = None,
         since: datetime | None = None,
     ) -> SyncBatchResult:
-        """Pull new workouts and telemetry from Polar AccessLink using the Transaction API."""
+        """Pull new workouts and telemetry from Polar AccessLink without prematurely committing."""
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json",
@@ -410,13 +450,8 @@ class PolarAdapter(BaseIngestionAdapter):
         async with httpx.AsyncClient(timeout=30.0) as client:
             tx_url = f"{self.BASE_URL}/users/{user_id}/exercise-transactions"
 
-            try:
-                tx_resp = await client.post(tx_url, headers=headers)
-            except httpx.HTTPError:
-                return SyncBatchResult(workouts=[], next_cursor=cursor, has_more=False)
-
+            tx_resp = await request_with_retry(client, "POST", tx_url, headers=headers)
             if tx_resp.status_code == 204:
-                # 204 No Content: No new exercises available
                 return SyncBatchResult(workouts=[], next_cursor=cursor, has_more=False)
 
             tx_resp.raise_for_status()
@@ -425,8 +460,9 @@ class PolarAdapter(BaseIngestionAdapter):
             if not transaction_id:
                 return SyncBatchResult(workouts=[], next_cursor=cursor, has_more=False)
 
-            # Step 2: List exercises in the transaction
-            exercises_resp = await client.get(
+            exercises_resp = await request_with_retry(
+                client,
+                "GET",
                 f"{tx_url}/{transaction_id}",
                 headers=headers,
             )
@@ -435,24 +471,21 @@ class PolarAdapter(BaseIngestionAdapter):
 
             normalized_workouts: list[NormalizedWorkout] = []
 
-            # Step 3: Fetch each exercise summary and its samples (HR & GPS)
             for ex_url in exercise_urls:
-                ex_resp = await client.get(ex_url, headers=headers)
+                ex_resp = await request_with_retry(client, "GET", ex_url, headers=headers)
                 if ex_resp.status_code != 200:
                     continue
                 ex_data = ex_resp.json()
 
-                # Fetch detailed samples (coordinates, speed, and heart rate)
                 samples_data: dict[str, Any] = {"heart_rate": [], "coordinates": [], "speed": []}
                 try:
-                    samples_url = f"{ex_url}/samples"
-                    samples_resp = await client.get(samples_url, headers=headers)
+                    samples_resp = await request_with_retry(client, "GET", f"{ex_url}/samples", headers=headers, max_attempts=2)
                     if samples_resp.status_code == 200:
                         raw_samples_resp = samples_resp.json()
                         sample_links = raw_samples_resp.get("samples")
                         if isinstance(sample_links, list):
                             for s_url in sample_links:
-                                s_resp = await client.get(s_url, headers=headers)
+                                s_resp = await request_with_retry(client, "GET", s_url, headers=headers, max_attempts=2)
                                 if s_resp.status_code == 200:
                                     s_json = s_resp.json()
                                     stype = s_json.get("sample-type")
@@ -488,17 +521,16 @@ class PolarAdapter(BaseIngestionAdapter):
                         elif isinstance(raw_samples_resp, dict):
                             for k, v in raw_samples_resp.items():
                                 samples_data[k] = v
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Optional Polar samples fetch failed for %s: %s", ex_url, type(exc).__name__)
 
-                # Fetch GPS route via Polar GPX endpoint first (AccessLink v3 standard), then fallback to /coordinates
                 if not samples_data["coordinates"]:
                     try:
                         gpx_headers = {
                             "Authorization": f"Bearer {access_token}",
                             "Accept": "application/gpx+xml",
                         }
-                        gpx_resp = await client.get(f"{ex_url}/gpx", headers=gpx_headers)
+                        gpx_resp = await request_with_retry(client, "GET", f"{ex_url}/gpx", headers=gpx_headers, max_attempts=2)
                         if gpx_resp.status_code == 200 and "<trkpt" in gpx_resp.text:
                             start_str = ex_data.get("start-time") or ex_data.get("start_time")
                             off_min = ex_data.get("start-time-utc-offset")
@@ -512,50 +544,51 @@ class PolarAdapter(BaseIngestionAdapter):
                                 except Exception:
                                     parsed_start = None
                             samples_data["coordinates"] = parse_gpx_points(gpx_resp.text, start_time_utc=parsed_start)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("Optional Polar GPX fetch failed: %s", type(exc).__name__)
 
                 if not samples_data["coordinates"]:
                     try:
-                        coord_url = f"{ex_url}/coordinates"
-                        coord_resp = await client.get(coord_url, headers=headers)
+                        coord_resp = await request_with_retry(client, "GET", f"{ex_url}/coordinates", headers=headers, max_attempts=2)
                         if coord_resp.status_code == 200:
                             c_json = coord_resp.json()
                             c_list = c_json.get("coordinates") if isinstance(c_json, dict) else c_json
                             if isinstance(c_list, list):
                                 samples_data["coordinates"] = c_list
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("Optional Polar coordinates fetch skipped: %s", type(exc).__name__)
 
-                # Fetch Polar-computed HR zones before committing the transaction
                 try:
-                    hz_resp = await client.get(f"{ex_url}/heart-rate-zones", headers=headers)
+                    hz_resp = await request_with_retry(client, "GET", f"{ex_url}/heart-rate-zones", headers=headers, max_attempts=2)
                     if hz_resp.status_code == 200:
                         hz_json = hz_resp.json()
                         if isinstance(hz_json, dict) and hz_json.get("zone"):
                             ex_data["polar_zones"] = hz_json["zone"]
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Optional Polar HR zones fetch skipped: %s", type(exc).__name__)
 
-                # Try fetching laps/splits
                 laps_data = None
                 try:
-                    laps_url = f"{ex_url}/laps"
-                    laps_resp = await client.get(laps_url, headers=headers)
+                    laps_resp = await request_with_retry(client, "GET", f"{ex_url}/laps", headers=headers, max_attempts=2)
                     if laps_resp.status_code == 200:
                         l_json = laps_resp.json()
                         laps_data = l_json.get("laps") if isinstance(l_json, dict) else l_json
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Optional Polar laps fetch skipped: %s", type(exc).__name__)
 
-                workout = self.normalize_polar_exercise(ex_data, samples_data, laps_data=laps_data)
-                normalized_workouts.append(workout)
+                try:
+                    workout = self.normalize_polar_exercise(ex_data, samples_data, laps_data=laps_data)
+                    normalized_workouts.append(workout)
+                except ValueError as val_exc:
+                    logger.warning("Skipping malformed Polar exercise: %s", val_exc)
 
-            # Step 4: Commit transaction to mark exercises as processed
-            await client.put(f"{tx_url}/{transaction_id}", headers=headers)
-
+            # Defer remote transaction PUT commit until sync_service confirms durable DB commit!
             return SyncBatchResult(
                 workouts=normalized_workouts,
                 next_cursor=cursor,
                 has_more=False,
+                pending_commit_token={
+                    "tx_url": tx_url,
+                    "transaction_id": transaction_id,
+                },
             )

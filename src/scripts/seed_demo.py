@@ -7,7 +7,6 @@ Usage:
 
 import argparse
 import asyncio
-import sys
 
 from src.core.database import async_session_factory
 from src.services.seed_service import SeedService

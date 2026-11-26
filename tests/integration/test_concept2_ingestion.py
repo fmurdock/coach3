@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.concept2 import Concept2Adapter
-from src.models import WorkoutSession, WorkoutSplit
+from src.models import WorkoutSplit
 from src.services.ingestion import ingest_workout
 
 

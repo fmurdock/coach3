@@ -1,12 +1,19 @@
-"""Canonical WorkoutSession model for all endurance activities."""
+"""Canonical WorkoutSession model for all endurance and strength activities."""
 
 from datetime import datetime
+from typing import TYPE_CHECKING, Any
 import uuid
 from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from src.models.base import Base, JSON_TYPE, TimestampMixin, UUIDPrimaryKeyMixin
+
+if TYPE_CHECKING:
+    from src.models.strength_set import StrengthSet
+    from src.models.telemetry import GPSRoutePoint, HeartRateSample, WorkoutSplit
+    from src.models.user import User
+    from src.models.voice_log import VoiceTranscriptionLog
 
 
 class WorkoutSession(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -65,11 +72,11 @@ class WorkoutSession(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     # Status & Annotations
     status: Mapped[str] = mapped_column(String(50), default="active", nullable=False)
-    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False, index=True)
     user_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    raw_summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    raw_summary: Mapped[dict[str, Any] | None] = mapped_column(JSON_TYPE, nullable=True)
 
-    # Relationships
+    # Relationships (lazy="select" prevents accidental OOM hydration on list endpoints)
     user: Mapped["User"] = relationship("User", back_populates="workouts")
     heart_rate_samples: Mapped[list["HeartRateSample"]] = relationship(
         "HeartRateSample",
@@ -93,11 +100,11 @@ class WorkoutSession(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         "StrengthSet",
         back_populates="workout_session",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="select",
         order_by="StrengthSet.set_index",
     )
     voice_logs: Mapped[list["VoiceTranscriptionLog"]] = relationship(
         "VoiceTranscriptionLog",
         back_populates="workout_session",
-        lazy="selectin",
+        lazy="select",
     )

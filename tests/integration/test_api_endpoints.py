@@ -8,11 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db
 from src.main import app
-from src.models import GPSRoutePoint, HeartRateSample, User, WorkoutSession
+from src.models import GPSRoutePoint, HeartRateSample, WorkoutSession
 
 
 @pytest.mark.asyncio
-async def test_health_check_endpoint():
+async def test_health_check_endpoint(db_session: AsyncSession):
+    app.dependency_overrides[get_db] = lambda: db_session
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/health")
@@ -20,6 +21,7 @@ async def test_health_check_endpoint():
         data = resp.json()
         assert data["status"] == "healthy"
         assert data["service"] == "coach3"
+        assert data["database"] == "connected"
 
 
 @pytest.mark.asyncio

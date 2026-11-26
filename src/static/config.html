@@ -2,158 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Coach3 — Settings & Integrations</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Coach3 — Settings &amp; Integrations</title>
+  <link rel="stylesheet" href="/static/css/common.css">
   <style>
-    :root {
-      --bg: #090d16;
-      --card: #131a29;
-      --card-border: #1f293d;
-      --text: #f1f5f9;
-      --text-muted: #94a3b8;
-      --accent: #38bdf8;
-      --accent-hover: #0284c7;
-      --success: #10b981;
-      --warning: #f59e0b;
-      --danger: #ef4444;
-      --purple: #a855f7;
-      --badge-bg: #1e293b;
-    }
-
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      -webkit-tap-highlight-color: transparent;
-    }
-
-    body {
-      background-color: var(--bg);
-      color: var(--text);
-      display: flex;
-      flex-direction: column;
-      min-height: 100vh;
-      padding: 16px;
-      padding-bottom: 40px;
-    }
-
-    /* Top Universal Navigation Bar */
-    nav.app-navbar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: var(--card);
-      border: 1px solid var(--card-border);
-      border-radius: 12px;
-      padding: 10px 16px;
-      margin-bottom: 20px;
-      flex-wrap: wrap;
-      gap: 12px;
-    }
-
-    .nav-brand {
-      font-size: 18px;
-      font-weight: 800;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      color: var(--text);
-      text-decoration: none;
-    }
-
-    .nav-brand span {
-      color: var(--accent);
-    }
-
-    .nav-links {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-
-    .nav-link {
-      color: var(--text-muted);
-      text-decoration: none;
-      padding: 6px 12px;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 500;
-      transition: all 0.2s;
-    }
-
-    .nav-link:hover {
-      color: var(--text);
-      background: rgba(255, 255, 255, 0.05);
-    }
-
-    .nav-link.active {
-      color: #fff;
-      background: var(--accent-hover);
-    }
-
-    .container {
-      max-width: 900px;
-      width: 100%;
-      margin: 0 auto;
-      display: flex;
-      flex-direction: column;
-      gap: 20px;
-    }
-
-    .card {
-      background: var(--card);
-      border: 1px solid var(--card-border);
-      border-radius: 12px;
-      padding: 20px;
-    }
-
-    .card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 16px;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .card-title {
-      font-size: 18px;
-      font-weight: 700;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      padding: 3px 8px;
-      border-radius: 9999px;
-      font-size: 12px;
-      font-weight: 600;
-      background: var(--badge-bg);
-      color: var(--text-muted);
-    }
-
-    .badge-success {
-      background: rgba(16, 185, 129, 0.2);
-      color: var(--success);
-      border: 1px solid var(--success);
-    }
-
-    .badge-warning {
-      background: rgba(245, 158, 11, 0.2);
-      color: var(--warning);
-      border: 1px solid var(--warning);
-    }
-
-    .badge-danger {
-      background: rgba(239, 68, 68, 0.2);
-      color: var(--danger);
-      border: 1px solid var(--danger);
-    }
-
     .step-box {
       background: rgba(0, 0, 0, 0.25);
       border: 1px solid var(--card-border);
@@ -165,18 +17,9 @@
       color: var(--text-muted);
     }
 
-    .step-box strong {
-      color: var(--text);
-    }
-
-    .step-box ol {
-      padding-left: 20px;
-      margin-top: 6px;
-    }
-
-    .step-box li {
-      margin-bottom: 4px;
-    }
+    .step-box strong { color: var(--text); }
+    .step-box ol { padding-left: 20px; margin-top: 6px; }
+    .step-box li { margin-bottom: 4px; }
 
     .url-copy-box {
       display: flex;
@@ -186,40 +29,11 @@
       border: 1px dashed var(--card-border);
       border-radius: 6px;
       padding: 8px 12px;
-      margin-top: 8px;
-      margin-bottom: 8px;
+      margin: 8px 0;
       font-family: monospace;
       font-size: 12px;
       color: var(--accent);
       word-break: break-all;
-    }
-
-    .form-group {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      margin-bottom: 14px;
-    }
-
-    label {
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--text-muted);
-    }
-
-    input, select {
-      background: #0b1120;
-      border: 1px solid var(--card-border);
-      color: var(--text);
-      padding: 10px 12px;
-      border-radius: 8px;
-      font-size: 14px;
-      outline: none;
-      transition: border-color 0.2s;
-    }
-
-    input:focus, select:focus {
-      border-color: var(--accent);
     }
 
     .actions-row {
@@ -229,91 +43,15 @@
       margin-top: 10px;
     }
 
-    button {
-      padding: 10px 16px;
-      border-radius: 8px;
-      border: none;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      transition: all 0.2s;
-    }
-
-    .btn-primary {
-      background: var(--accent-hover);
-      color: #fff;
-    }
-    .btn-primary:hover {
-      background: var(--accent);
-    }
-
-    .btn-secondary {
-      background: #1e293b;
-      color: var(--text);
-      border: 1px solid var(--card-border);
-    }
-    .btn-secondary:hover {
-      background: #334155;
-    }
-
-    .btn-success {
-      background: var(--success);
-      color: #fff;
-    }
-
-    .btn-danger {
-      background: rgba(239, 68, 68, 0.2);
-      color: var(--danger);
-      border: 1px solid var(--danger);
-    }
-    .btn-danger:hover {
-      background: var(--danger);
-      color: #fff;
-    }
-
-    .toast-container {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      z-index: 9999;
-    }
-
-    .toast {
-      padding: 12px 18px;
-      border-radius: 8px;
-      color: #fff;
-      font-size: 14px;
-      font-weight: 500;
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
-      animation: fadeIn 0.3s ease-out;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .toast-success { background: #059669; }
-    .toast-error { background: #dc2626; }
-    .toast-info { background: #0284c7; }
-
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(10px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
     .alert-banner {
       padding: 14px;
       border-radius: 8px;
       font-size: 14px;
-      margin-bottom: 16px;
+      margin-bottom: 4px;
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 12px;
     }
 
     .alert-error {
@@ -327,19 +65,81 @@
       border: 1px solid var(--success);
       color: #6ee7b7;
     }
+
+    .decryption-warning {
+      display: none;
+      margin-bottom: 14px;
+      padding: 12px;
+      border-radius: 8px;
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid var(--danger);
+      color: #fca5a5;
+      font-size: 13px;
+    }
+
+    .diag-box {
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--text-muted);
+      display: none;
+    }
+
+    .diag-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .diag-metric {
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+
+    .diag-metric-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .diag-metric-value {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .audit-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-top: 10px;
+    }
+
+    .audit-table th, .audit-table td {
+      text-align: left;
+      padding: 8px;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    .audit-table th {
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-size: 11px;
+    }
   </style>
 </head>
 <body>
-  <!-- Shared Navbar -->
   <nav class="app-navbar">
-    <a href="/dashboard" class="nav-brand">
-      Coach<span>3</span>
-    </a>
+    <a href="/dashboard" class="nav-brand">Coach<span>3</span></a>
     <div class="nav-links">
       <a href="/gym" class="nav-link">🎙️ Gym Mode</a>
       <a href="/dashboard" class="nav-link">📊 Dashboard</a>
       <a href="/coach" class="nav-link">🤖 AI Coach</a>
       <a href="/config" class="nav-link active">⚙️ Settings</a>
+      <button id="btn-signout" class="btn-secondary nav-signout" style="display:none;">Sign Out</button>
     </div>
   </nav>
 
@@ -347,27 +147,29 @@
     <!-- Dynamic Alert Banner -->
     <div id="statusBanner" style="display:none;" class="alert-banner">
       <span id="bannerText"></span>
-      <button class="btn-secondary" style="padding:4px 8px; font-size:12px;" onclick="closeBanner()">Dismiss</button>
+      <button id="btnCloseBanner" class="btn-secondary" type="button" style="padding:4px 8px; font-size:12px;">Dismiss</button>
     </div>
 
     <!-- Polar Setup Card -->
     <div class="card" id="polarCard">
       <div class="card-header">
-        <div class="card-title">
-          🏃 Polar AccessLink (Outdoor Running)
-        </div>
+        <div class="card-title">🏃 Polar AccessLink (Outdoor Running)</div>
         <span class="badge" id="polarStatusBadge">Checking...</span>
+      </div>
+
+      <div id="polarDecryptWarning" class="decryption-warning">
+        ⚠️ Stored Polar credentials could not be decrypted with the active <code>ENCRYPTION_KEY</code>. Please re-enter both Client ID and Client Secret below and reconnect Polar.
       </div>
 
       <div class="step-box">
         <strong>Setup Guide:</strong>
         <ol>
-          <li>Sign in or register an application at <a href="https://flow.polar.com" target="_blank" style="color:var(--accent);">flow.polar.com</a> (Developer Portal).</li>
+          <li>Sign in or register an application at <a href="https://flow.polar.com" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">flow.polar.com</a> (Developer Portal).</li>
           <li>Set the <strong>Redirect URI</strong> in the Polar Portal to the exact callback URL below:</li>
         </ol>
         <div class="url-copy-box">
           <span id="polarCallbackUrl"></span>
-          <button class="btn-secondary" style="padding: 2px 8px; font-size: 11px; margin-left: auto;" onclick="copyText('polarCallbackUrl')">Copy</button>
+          <button class="btn-secondary" id="btnCopyPolarUrl" type="button" style="padding: 2px 8px; font-size: 11px; margin-left: auto;">Copy</button>
         </div>
         <ol start="3">
           <li>Copy your Polar <strong>Client ID</strong> and <strong>Client Secret</strong> into the fields below and save.</li>
@@ -377,41 +179,43 @@
 
       <div class="form-group">
         <label for="polarClientId">Client ID</label>
-        <input type="text" id="polarClientId" placeholder="e.g. 1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d">
+        <input type="text" id="polarClientId" autocomplete="off" placeholder="e.g. 1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d">
       </div>
       <div class="form-group">
         <label for="polarClientSecret">Client Secret</label>
-        <input type="password" id="polarClientSecret" placeholder="••••••••••••••••">
+        <input type="password" id="polarClientSecret" autocomplete="new-password" placeholder="Enter new Client Secret">
       </div>
 
       <div class="actions-row">
-        <button class="btn-primary" onclick="saveCredentials('polar')">Save Credentials</button>
-        <button class="btn-success" id="btnConnectPolar" onclick="connectProvider('polar')">Connect Polar</button>
-        <button class="btn-secondary" onclick="verifyProvider('polar')">Verify Connection</button>
-        <button class="btn-secondary" onclick="syncProvider('polar')" title="Manually trigger immediate sync">🔄 Sync Now</button>
+        <button class="btn-primary" id="btnSavePolar" type="button">Save Credentials</button>
+        <button class="btn-success" id="btnConnectPolar" type="button">Connect Polar</button>
+        <button class="btn-secondary" id="btnVerifyPolar" type="button">Verify Connection</button>
+        <button class="btn-secondary" id="btnSyncPolar" type="button" title="Manually trigger immediate sync">🔄 Sync Now</button>
       </div>
 
-      <div id="polarDiag" style="margin-top:14px; font-size:13px; color:var(--text-muted); display:none;"></div>
+      <div id="polarDiag" class="diag-box"></div>
     </div>
 
     <!-- Concept2 Setup Card -->
     <div class="card" id="concept2Card">
       <div class="card-header">
-        <div class="card-title">
-          🚣 Concept2 Logbook (Rower & Erg Bike)
-        </div>
+        <div class="card-title">🚣 Concept2 Logbook (Rower &amp; Erg Bike)</div>
         <span class="badge" id="concept2StatusBadge">Checking...</span>
+      </div>
+
+      <div id="concept2DecryptWarning" class="decryption-warning">
+        ⚠️ Stored Concept2 credentials could not be decrypted with the active <code>ENCRYPTION_KEY</code>. Please re-enter both Client ID and Client Secret below and reconnect Concept2.
       </div>
 
       <div class="step-box">
         <strong>Setup Guide:</strong>
         <ol>
-          <li>Sign in to <a href="https://log.concept2.com/developers" target="_blank" style="color:var(--accent);">log.concept2.com/developers</a>.</li>
+          <li>Sign in to <a href="https://log.concept2.com/developers" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">log.concept2.com/developers</a>.</li>
           <li>Register a new application and configure the <strong>Redirect URI</strong>:</li>
         </ol>
         <div class="url-copy-box">
           <span id="concept2CallbackUrl"></span>
-          <button class="btn-secondary" style="padding: 2px 8px; font-size: 11px; margin-left: auto;" onclick="copyText('concept2CallbackUrl')">Copy</button>
+          <button class="btn-secondary" id="btnCopyConcept2Url" type="button" style="padding: 2px 8px; font-size: 11px; margin-left: auto;">Copy</button>
         </div>
         <ol start="3">
           <li>Enter your Concept2 <strong>Client ID</strong> and <strong>Client Secret</strong> below and save.</li>
@@ -421,30 +225,28 @@
 
       <div class="form-group">
         <label for="concept2ClientId">Client ID</label>
-        <input type="text" id="concept2ClientId" placeholder="e.g. concept2_client_id">
+        <input type="text" id="concept2ClientId" autocomplete="off" placeholder="e.g. concept2_client_id">
       </div>
       <div class="form-group">
         <label for="concept2ClientSecret">Client Secret</label>
-        <input type="password" id="concept2ClientSecret" placeholder="••••••••••••••••">
+        <input type="password" id="concept2ClientSecret" autocomplete="new-password" placeholder="Enter new Client Secret">
       </div>
 
       <div class="actions-row">
-        <button class="btn-primary" onclick="saveCredentials('concept2')">Save Credentials</button>
-        <button class="btn-success" id="btnConnectConcept2" onclick="connectProvider('concept2')">Connect Concept2</button>
-        <button class="btn-secondary" onclick="verifyProvider('concept2')">Verify Connection</button>
-        <button class="btn-secondary" onclick="syncProvider('concept2')" title="Manually trigger immediate sync">🔄 Sync Now</button>
+        <button class="btn-primary" id="btnSaveConcept2" type="button">Save Credentials</button>
+        <button class="btn-success" id="btnConnectConcept2" type="button">Connect Concept2</button>
+        <button class="btn-secondary" id="btnVerifyConcept2" type="button">Verify Connection</button>
+        <button class="btn-secondary" id="btnSyncConcept2" type="button" title="Manually trigger immediate sync">🔄 Sync Now</button>
       </div>
 
-      <div id="concept2Diag" style="margin-top:14px; font-size:13px; color:var(--text-muted); display:none;"></div>
+      <div id="concept2Diag" class="diag-box"></div>
     </div>
 
     <!-- AI Inference Provider Card -->
     <div class="card" id="aiCard">
       <div class="card-header">
-        <div class="card-title">
-          🤖 AI Inference Provider (Coaching Engine)
-        </div>
-        <span class="badge" id="aiStatusBadge">Configuring</span>
+        <div class="card-title">🤖 AI Inference Provider (Coaching Engine)</div>
+        <span class="badge" id="aiStatusBadge">Loading...</span>
       </div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:14px;">
         Choose between Google Gemini API (cloud, high-reasoning) or self-hosted local llama.cpp server for private homelab inference.
@@ -452,7 +254,7 @@
 
       <div class="form-group">
         <label for="aiProviderType">Provider Type</label>
-        <select id="aiProviderType" onchange="toggleAiFields()">
+        <select id="aiProviderType">
           <option value="gemini">Google Gemini API (Cloud)</option>
           <option value="llama_cpp">Self-Hosted llama.cpp (Local Homelab)</option>
         </select>
@@ -470,33 +272,31 @@
 
       <div class="form-group" id="aiApiKeyGroup">
         <label for="aiApiKey">API Key</label>
-        <input type="password" id="aiApiKey" placeholder="Enter Gemini API key">
+        <input type="password" id="aiApiKey" autocomplete="new-password" placeholder="Enter Gemini API key">
       </div>
 
       <div class="actions-row">
-        <button class="btn-primary" onclick="saveAiProvider()">Save AI Provider</button>
-        <button class="btn-secondary" onclick="testAiProvider()">Test AI Connection</button>
+        <button class="btn-primary" id="btnSaveAi" type="button">Save &amp; Activate AI Provider</button>
+        <button class="btn-secondary" id="btnTestAi" type="button">Test AI Connection</button>
       </div>
 
-      <div id="aiDiag" style="margin-top:14px; font-size:13px; color:var(--text-muted); display:none;"></div>
+      <div id="aiDiag" class="diag-box"></div>
     </div>
 
     <!-- Heart Rate Zones Profile Card -->
     <div class="card" id="hrProfileCard">
       <div class="card-header">
-        <div class="card-title">
-          ❤️ Heart Rate Zones Profile
-        </div>
+        <div class="card-title">❤️ Heart Rate Zones Profile</div>
         <span class="badge" id="hrZoneBadge">Configured</span>
       </div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:14px;">
-        Configure your Max Heart Rate (defaults to <strong>185 bpm</strong> for new profiles) and Zone 1–5 thresholds. Saving automatically recalculates Zone 1–5 durations across your entire workout history.
+        Configure your Resting HR (25–120 bpm), Max HR (defaults to <strong>185 bpm</strong>), and Zone 1–5 thresholds. Saving automatically recalculates Zone 1–5 durations across your workout history.
       </p>
 
       <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap:12px; margin-bottom:14px;">
         <div class="form-group" style="margin:0;">
           <label for="hrResting">Resting HR (bpm)</label>
-          <input type="number" id="hrResting" min="31" max="120" value="50">
+          <input type="number" id="hrResting" min="25" max="120" value="50">
         </div>
         <div class="form-group" style="margin:0;">
           <label for="hrMax">Max HR (bpm)</label>
@@ -528,17 +328,56 @@
       </div>
 
       <div class="actions-row">
-        <button class="btn-primary" onclick="saveHrProfile()">Save &amp; Recalculate Zones</button>
-        <button class="btn-secondary" onclick="applyMaxHrPercentDefaults()">Calculate Default % from Max HR</button>
+        <button class="btn-primary" id="btnSaveHr" type="button">Save &amp; Recalculate Zones</button>
+        <button class="btn-secondary" id="btnDefaultHr" type="button">Calculate Default % from Max HR</button>
       </div>
+    </div>
+
+    <!-- Athlete Timezone & Data Backup Card -->
+    <div class="card" id="preferencesBackupCard">
+      <div class="card-header">
+        <div class="card-title">🌍 Athlete Timezone &amp; Training Data Export</div>
+        <span class="badge" id="timezoneBadge">UTC</span>
+      </div>
+      <div class="form-group">
+        <label for="athleteTimezone">Local IANA Timezone (used for weekly Monday bucketing &amp; day boundaries)</label>
+        <input type="text" id="athleteTimezone" list="commonTimezones" placeholder="e.g. America/Los_Angeles">
+        <datalist id="commonTimezones">
+          <option value="UTC"></option>
+          <option value="America/Los_Angeles"></option>
+          <option value="America/Denver"></option>
+          <option value="America/Chicago"></option>
+          <option value="America/New_York"></option>
+          <option value="Europe/London"></option>
+          <option value="Europe/Berlin"></option>
+          <option value="Asia/Tokyo"></option>
+          <option value="Australia/Sydney"></option>
+        </datalist>
+      </div>
+      <div class="actions-row">
+        <button class="btn-primary" id="btnSaveTimezone" type="button">Save Timezone</button>
+        <button class="btn-secondary" id="btnDetectTimezone" type="button">Use Browser Timezone</button>
+        <button class="btn-success" id="btnExportZip" type="button">📦 Export Training History (.zip)</button>
+      </div>
+    </div>
+
+    <!-- System Health & Sync Diagnostics Card -->
+    <div class="card" id="diagnosticsCard">
+      <div class="card-header">
+        <div class="card-title">🩺 System Health &amp; Sync Diagnostics</div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <span class="badge" id="diagHealthBadge">Checking...</span>
+          <button class="btn-secondary" id="btnRefreshDiag" type="button" style="padding:4px 10px; font-size:12px;">Refresh</button>
+        </div>
+      </div>
+      <div class="diag-grid" id="diagSummaryGrid"></div>
+      <div id="diagAuditContainer"></div>
     </div>
 
     <!-- Demo Data & Testing Tools Card -->
     <div class="card" id="demoCard">
       <div class="card-header">
-        <div class="card-title">
-          🧪 Demo Data & System Testing
-        </div>
+        <div class="card-title">🧪 Demo Data &amp; System Testing</div>
         <span class="badge">Isolated</span>
       </div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:14px;">
@@ -546,348 +385,17 @@
       </p>
 
       <div class="actions-row">
-        <button class="btn-success" onclick="seedDemoData()">Load Sample Workouts</button>
-        <button class="btn-danger" onclick="resetDemoData()">Reset Demo Data</button>
+        <button class="btn-success" id="btnSeedDemo" type="button">Load Sample Workouts</button>
+        <button class="btn-danger" id="btnResetDemo" type="button">Reset Demo Data</button>
       </div>
       <p style="font-size:12px; color:var(--text-muted); margin-top:10px;">
-        <em>Note: "Reset Demo Data" strictly purges synthetic sessions (is_demo=true) and will never touch real workout records or saved integration accounts. Terminal equivalent: <code>python -m src.scripts.seed_demo</code></em>
+        <em>Note: "Reset Demo Data" strictly purges synthetic sessions (is_demo=true) and will never touch real workout records or saved integration accounts.</em>
       </p>
     </div>
   </div>
 
   <div class="toast-container" id="toastContainer"></div>
-
-  <script>
-    const origin = window.location.origin;
-    document.getElementById("polarCallbackUrl").innerText = origin + "/api/v1/integrations/polar/callback";
-    document.getElementById("concept2CallbackUrl").innerText = origin + "/api/v1/integrations/concept2/callback";
-
-    function showToast(message, type = "info") {
-      const container = document.getElementById("toastContainer");
-      const toast = document.createElement("div");
-      toast.className = `toast toast-${type}`;
-      toast.innerText = message;
-      container.appendChild(toast);
-      setTimeout(() => toast.remove(), 4000);
-    }
-
-    function copyText(elementId) {
-      const text = document.getElementById(elementId).innerText;
-      navigator.clipboard.writeText(text);
-      showToast("Callback URL copied to clipboard!", "success");
-    }
-
-    function checkQueryParams() {
-      const params = new URLSearchParams(window.location.search);
-      const status = params.get("status");
-      const provider = params.get("provider");
-      const message = params.get("message");
-      const banner = document.getElementById("statusBanner");
-      const text = document.getElementById("bannerText");
-
-      if (status === "connected") {
-        banner.className = "alert-banner alert-success";
-        banner.style.display = "flex";
-        text.innerText = `Successfully connected to ${provider ? provider.toUpperCase() : "service"}! Workout synchronization is now active.`;
-        showToast("Connected successfully!", "success");
-        window.history.replaceState({}, document.title, window.location.pathname);
-      } else if (status === "error") {
-        banner.className = "alert-banner alert-error";
-        banner.style.display = "flex";
-        text.innerText = `Connection error (${provider || "OAuth"}): ${message || "Authorization failed"}`;
-        showToast("Authorization error encountered.", "error");
-        window.history.replaceState({}, document.title, window.location.pathname);
-      }
-    }
-
-    function closeBanner() {
-      document.getElementById("statusBanner").style.display = "none";
-    }
-
-    async function loadConfigs() {
-      try {
-        const res = await fetch("/api/v1/config/integrations");
-        if (!res.ok) throw new Error("Failed to load configs");
-        const configs = await res.json();
-
-        configs.forEach(c => {
-          const badge = document.getElementById(`${c.provider}StatusBadge`);
-          const idInput = document.getElementById(`${c.provider}ClientId`);
-          if (c.is_connected) {
-            badge.className = "badge badge-success";
-            badge.innerText = "Connected";
-          } else if (c.is_configured) {
-            badge.className = "badge badge-warning";
-            badge.innerText = "Configured (Not Linked)";
-          } else {
-            badge.className = "badge badge-danger";
-            badge.innerText = "Unconfigured";
-          }
-
-          if (c.masked_client_id) {
-            idInput.value = c.masked_client_id;
-          }
-        });
-      } catch (err) {
-        showToast("Error loading integration configurations: " + err.message, "error");
-      }
-    }
-
-    async function saveCredentials(provider) {
-      const cid = document.getElementById(`${provider}ClientId`).value.trim();
-      const csec = document.getElementById(`${provider}ClientSecret`).value.trim();
-      const redir = document.getElementById(`${provider}CallbackUrl`).innerText;
-
-      if (!cid || !csec) {
-        showToast("Please enter both Client ID and Client Secret.", "error");
-        return;
-      }
-
-      try {
-        const res = await fetch(`/api/v1/config/integrations/${provider}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ client_id: cid, client_secret: csec, redirect_uri: redir }),
-        });
-        if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.detail || "Failed to save credentials");
-        }
-        showToast(`Saved ${provider.toUpperCase()} credentials successfully!`, "success");
-        loadConfigs();
-      } catch (err) {
-        showToast(err.message, "error");
-      }
-    }
-
-    async function connectProvider(provider) {
-      try {
-        const res = await fetch(`/api/v1/integrations/${provider}/auth-url`);
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.detail || "Could not generate auth URL");
-        }
-        const data = await res.json();
-        window.location.href = data.auth_url;
-      } catch (err) {
-        showToast(err.message, "error");
-      }
-    }
-
-    async function verifyProvider(provider) {
-      const diagDiv = document.getElementById(`${provider}Diag`);
-      diagDiv.style.display = "block";
-      diagDiv.innerText = "Pinging API and checking token status...";
-
-      try {
-        const res = await fetch(`/api/v1/integrations/${provider}/verify`, { method: "POST" });
-        const data = await res.json();
-
-        if (data.status === "healthy") {
-          diagDiv.innerHTML = `<span style="color:var(--success);">✓ Healthy connection</span>: ${data.athlete_name || "Authenticated"} ${data.last_sync_at ? "• Last synced: " + new Date(data.last_sync_at).toLocaleString() : ""}`;
-          showToast(`${provider.toUpperCase()} connection verified healthy!`, "success");
-        } else if (data.status === "expired") {
-          diagDiv.innerHTML = `<span style="color:var(--warning);">⚠️ Token expired</span>. Please click 'Connect' to re-authorize.`;
-          showToast(`${provider.toUpperCase()} token expired.`, "warning");
-        } else {
-          diagDiv.innerHTML = `<span style="color:var(--danger);">✗ Diagnostic check:</span> ${data.error_message || data.status}`;
-          showToast(`Diagnostic issue: ${data.error_message || data.status}`, "error");
-        }
-        loadConfigs();
-      } catch (err) {
-        diagDiv.innerText = "Verification failed: " + err.message;
-        showToast(err.message, "error");
-      }
-    }
-
-    async function syncProvider(provider) {
-      const diagDiv = document.getElementById(`${provider}Diag`);
-      diagDiv.style.display = "block";
-      diagDiv.innerText = `Synchronizing latest workouts from ${provider.toUpperCase()}...`;
-      showToast(`Starting ${provider.toUpperCase()} sync...`, "info");
-
-      try {
-        const res = await fetch(`/api/v1/integrations/${provider}/sync`, { method: "POST" });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.detail || "Sync failed");
-        }
-        const log = await res.json();
-        if (log.status === "success") {
-          diagDiv.innerHTML = `<span style="color:var(--success);">✓ Sync successful:</span> Imported ${log.items_imported} new, ${log.items_updated} updated.`;
-          showToast(`${provider.toUpperCase()} sync complete (${log.items_imported} new).`, "success");
-        } else {
-          diagDiv.innerHTML = `<span style="color:var(--danger);">✗ Sync status: ${log.status}</span> ${log.error_message ? "— " + log.error_message : ""}`;
-          showToast(`Sync ${log.status}: ${log.error_message || "Check logs"}`, "error");
-        }
-        loadConfigs();
-      } catch (err) {
-        diagDiv.innerText = "Sync failed: " + err.message;
-        showToast(err.message, "error");
-      }
-    }
-
-    function toggleAiFields() {
-      const type = document.getElementById("aiProviderType").value;
-      const endpointGroup = document.getElementById("aiEndpointGroup");
-      const keyGroup = document.getElementById("aiApiKeyGroup");
-      const modelInput = document.getElementById("aiModelName");
-
-      if (type === "llama_cpp") {
-        endpointGroup.style.display = "flex";
-        keyGroup.style.display = "none";
-        modelInput.value = "qwen2.5-14b-instruct";
-      } else {
-        endpointGroup.style.display = "none";
-        keyGroup.style.display = "flex";
-        modelInput.value = "gemini-2.5-flash";
-      }
-    }
-
-    async function saveAiProvider() {
-      const type = document.getElementById("aiProviderType").value;
-      const model = document.getElementById("aiModelName").value.trim();
-      const key = document.getElementById("aiApiKey").value.trim();
-      const endpoint = type === "llama_cpp" ? document.getElementById("aiEndpointUrl").value.trim() : "https://generativelanguage.googleapis.com";
-
-      try {
-        const res = await fetch("/api/v1/coaching/providers", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            provider_type: type,
-            model_name: model,
-            endpoint_url: endpoint,
-            api_key: key || undefined,
-            is_active: true,
-          }),
-        });
-        if (!res.ok) throw new Error("Failed to save AI provider");
-        showToast("AI provider configuration saved!", "success");
-      } catch (err) {
-        showToast(err.message, "error");
-      }
-    }
-
-    async function testAiProvider() {
-      const diag = document.getElementById("aiDiag");
-      diag.style.display = "block";
-      diag.innerText = "Testing active inference provider connectivity...";
-      try {
-        const res = await fetch("/api/v1/coaching/providers");
-        if (!res.ok) throw new Error("Could not fetch active provider");
-        const providers = await res.json();
-        const active = providers.find(p => p.is_active);
-        if (!active) {
-          diag.innerText = "No active provider selected. Please save one first.";
-          return;
-        }
-
-        const testRes = await fetch(`/api/v1/coaching/providers/${active.id}/test`, { method: "POST" });
-        const testData = await testRes.json();
-        if (testData.status === "healthy") {
-          diag.innerHTML = `<span style="color:var(--success);">✓ Connected</span>: ${testData.message || "Model responding"} (${testData.latency_ms || 120}ms)`;
-          showToast("AI provider verified healthy!", "success");
-        } else {
-          diag.innerHTML = `<span style="color:var(--danger);">✗ Unreachable:</span> ${testData.message}`;
-          showToast("AI provider unreachable.", "error");
-        }
-      } catch (err) {
-        diag.innerText = "Test failed: " + err.message;
-        showToast(err.message, "error");
-      }
-    }
-
-    async function seedDemoData() {
-      try {
-        showToast("Seeding sample workouts...", "info");
-        const res = await fetch("/api/v1/admin/demo/seed", { method: "POST" });
-        if (!res.ok) throw new Error("Failed to seed demo data");
-        const data = await res.json();
-        showToast(`Seeded ${data.workouts_created} workouts and ${data.strength_sets_created} strength sets!`, "success");
-      } catch (err) {
-        showToast(err.message, "error");
-      }
-    }
-
-    async function resetDemoData() {
-      if (!confirm("Are you sure you want to purge all demo workouts? Real data will be preserved.")) return;
-      try {
-        const res = await fetch("/api/v1/admin/demo", { method: "DELETE" });
-        if (!res.ok) throw new Error("Failed to reset demo data");
-        const data = await res.json();
-        showToast(`Reset complete. Purged ${data.workouts_deleted} demo workout records.`, "success");
-      } catch (err) {
-        showToast(err.message, "error");
-      }
-    }
-
-    async function loadHrProfile() {
-      try {
-        const res = await fetch("/api/v1/profile/heart-rate");
-        if (!res.ok) return;
-        const p = await res.json();
-        document.getElementById("hrResting").value = p.resting_hr;
-        document.getElementById("hrMax").value = p.max_hr;
-        document.getElementById("z1Min").value = p.zone1_min;
-        document.getElementById("z1Max").value = p.zone1_max;
-        document.getElementById("z2Min").value = p.zone2_min;
-        document.getElementById("z2Max").value = p.zone2_max;
-        document.getElementById("z3Min").value = p.zone3_min;
-        document.getElementById("z3Max").value = p.zone3_max;
-        document.getElementById("z4Min").value = p.zone4_min;
-        document.getElementById("z4Max").value = p.zone4_max;
-        document.getElementById("z5Min").value = p.zone5_min;
-        document.getElementById("z5Max").value = p.zone5_max;
-      } catch (e) {}
-    }
-
-    function applyMaxHrPercentDefaults() {
-      const m = parseInt(document.getElementById("hrMax").value, 10) || 185;
-      document.getElementById("z1Min").value = Math.round(m * 0.50);
-      document.getElementById("z1Max").value = Math.round(m * 0.60);
-      document.getElementById("z2Min").value = Math.round(m * 0.60);
-      document.getElementById("z2Max").value = Math.round(m * 0.70);
-      document.getElementById("z3Min").value = Math.round(m * 0.70);
-      document.getElementById("z3Max").value = Math.round(m * 0.80);
-      document.getElementById("z4Min").value = Math.round(m * 0.80);
-      document.getElementById("z4Max").value = Math.round(m * 0.90);
-      document.getElementById("z5Min").value = Math.round(m * 0.90);
-      document.getElementById("z5Max").value = m;
-    }
-
-    async function saveHrProfile() {
-      const payload = {
-        resting_hr: parseInt(document.getElementById("hrResting").value, 10),
-        max_hr: parseInt(document.getElementById("hrMax").value, 10),
-        zone1_min: parseInt(document.getElementById("z1Min").value, 10),
-        zone1_max: parseInt(document.getElementById("z1Max").value, 10),
-        zone2_min: parseInt(document.getElementById("z2Min").value, 10),
-        zone2_max: parseInt(document.getElementById("z2Max").value, 10),
-        zone3_min: parseInt(document.getElementById("z3Min").value, 10),
-        zone3_max: parseInt(document.getElementById("z3Max").value, 10),
-        zone4_min: parseInt(document.getElementById("z4Min").value, 10),
-        zone4_max: parseInt(document.getElementById("z4Max").value, 10),
-        zone5_min: parseInt(document.getElementById("z5Min").value, 10),
-        zone5_max: parseInt(document.getElementById("z5Max").value, 10),
-      };
-      try {
-        const res = await fetch("/api/v1/profile/heart-rate", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        if (!res.ok) throw new Error(await res.text());
-        showToast("Heart rate zones saved & workout history recalculated!", "success");
-      } catch (err) {
-        showToast("Failed to save HR profile: " + err.message, "error");
-      }
-    }
-
-    // Initialize
-    checkQueryParams();
-    loadConfigs();
-    loadHrProfile();
-  </script>
+  <script src="/static/js/common.js"></script>
+  <script src="/static/js/config.js"></script>
 </body>
 </html>

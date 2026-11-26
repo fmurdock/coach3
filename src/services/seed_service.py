@@ -1,10 +1,12 @@
 """Service for seeding realistic multi-modal sample workouts and safely purging demo data."""
 
 from datetime import datetime, timedelta, timezone
+from typing import Any
 import uuid
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.deps import get_or_create_default_hr_profile, get_or_create_default_user
 from src.models import (
     CoachingPhilosophy,
     ExerciseAlias,
@@ -13,44 +15,18 @@ from src.models import (
     StrengthExercise,
     StrengthSet,
     User,
-    UserHeartRateProfile,
     WorkoutSession,
     WorkoutSplit,
 )
+from src.scripts.seed_exercises import exercise_uuid_for_slug
 
 
 class SeedService:
     @classmethod
     async def ensure_default_athlete_and_philosophy(cls, db: AsyncSession) -> User:
         """Ensures a default user with HR profile and active coaching philosophy exists."""
-        res = await db.execute(select(User))
-        user = res.scalars().first()
-        if not user:
-            user = User(id=uuid.uuid4())
-            db.add(user)
-            await db.flush()
-
-        res_hr = await db.execute(select(UserHeartRateProfile).where(UserHeartRateProfile.user_id == user.id))
-        hr = res_hr.scalars().first()
-        if not hr:
-            default_max_hr = 185
-            hr = UserHeartRateProfile(
-                id=uuid.uuid4(),
-                user_id=user.id,
-                resting_hr=50,
-                max_hr=default_max_hr,
-                zone1_min=round(default_max_hr * 0.50),
-                zone1_max=round(default_max_hr * 0.60),
-                zone2_min=round(default_max_hr * 0.60),
-                zone2_max=round(default_max_hr * 0.70),
-                zone3_min=round(default_max_hr * 0.70),
-                zone3_max=round(default_max_hr * 0.80),
-                zone4_min=round(default_max_hr * 0.80),
-                zone4_max=round(default_max_hr * 0.90),
-                zone5_min=round(default_max_hr * 0.90),
-                zone5_max=default_max_hr,
-            )
-            db.add(hr)
+        user = await get_or_create_default_user(db)
+        await get_or_create_default_hr_profile(db, user.id)
 
         res_phil = await db.execute(select(CoachingPhilosophy).where(CoachingPhilosophy.user_id == user.id))
         phil = res_phil.scalars().first()
@@ -69,14 +45,13 @@ class SeedService:
             )
             db.add(phil)
 
-        await db.commit()
-        await db.refresh(user)
+        await db.flush()
         return user
 
     @classmethod
     async def ensure_default_exercises(cls, db: AsyncSession) -> dict[str, StrengthExercise]:
-        """Ensures standard strength exercises exist in the catalog."""
-        exercises = {
+        """Ensures standard strength exercises exist in the catalog using deterministic UUIDv5 IDs."""
+        exercises: dict[str, dict[str, Any]] = {
             "bench_press": {
                 "name": "Barbell Bench Press",
                 "slug": "barbell-bench-press",
@@ -114,7 +89,7 @@ class SeedService:
             ex = res.scalars().first()
             if not ex:
                 ex = StrengthExercise(
-                    id=uuid.uuid4(),
+                    id=exercise_uuid_for_slug(data["slug"]),
                     canonical_name=data["name"],
                     slug=data["slug"],
                     category=data["category"],
@@ -127,13 +102,13 @@ class SeedService:
                 alias = ExerciseAlias(id=uuid.uuid4(), exercise_id=ex.id, alias=data["name"].lower())
                 db.add(alias)
             catalog[key] = ex
-        await db.commit()
+        await db.flush()
         return catalog
 
     @classmethod
     async def seed_sample_workouts(cls, db: AsyncSession) -> tuple[int, int]:
         """Seeds realistic running, rowing, bike erg, and strength sessions with is_demo=True.
-        
+
         Returns:
             (workouts_created, strength_sets_created)
         """
@@ -143,7 +118,7 @@ class SeedService:
         # Avoid duplicating if already seeded
         q_existing = select(WorkoutSession).where(
             WorkoutSession.user_id == user.id,
-            WorkoutSession.is_demo == True,
+            WorkoutSession.is_demo.is_(True),
         )
         res_existing = await db.execute(q_existing)
         if len(res_existing.scalars().all()) >= 5:
@@ -468,7 +443,7 @@ class SeedService:
             int_idx = sec // 240
             rem_sec = sec % 240
             fraction = rem_sec / 240.0
-            
+
             if int_idx % 2 == 0:
                 # Work interval: HR ramps up to peak
                 base_hr = 145 + (int_idx * 3)
@@ -494,7 +469,7 @@ class SeedService:
     @classmethod
     async def purge_demo_data(cls, db: AsyncSession) -> int:
         """Purges only synthetic workout sessions where is_demo == True."""
-        q = delete(WorkoutSession).where(WorkoutSession.is_demo == True)
+        q = delete(WorkoutSession).where(WorkoutSession.is_demo.is_(True))
         res = await db.execute(q)
         await db.commit()
-        return res.rowcount
+        return int(getattr(res, "rowcount", 0) or 0)

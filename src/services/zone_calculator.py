@@ -22,7 +22,7 @@ def calculate_zone_durations(
     max_gap_sec: float = 10.0,
 ) -> ZoneDurations:
     """Calculate the duration spent in Zones 1 through 5 using user HR profile thresholds.
-    
+
     If hr_profile is None or has invalid bounds, returns zero durations.
     """
     if not samples or not hr_profile:

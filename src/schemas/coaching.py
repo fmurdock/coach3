@@ -1,7 +1,7 @@
 """Pydantic v2 schemas for Adaptive AI Coaching Engine."""
 
 from datetime import date, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 import uuid
 from pydantic import BaseModel, Field
 
@@ -9,12 +9,12 @@ from pydantic import BaseModel, Field
 # --- Provider Schemas ---
 
 class SaveProviderRequest(BaseModel):
-    provider_type: str = Field(..., pattern="^(gemini|llama_cpp)$")
-    endpoint_url: str
+    provider_type: Literal["gemini", "llama_cpp"]
+    endpoint_url: str = Field(..., min_length=1, max_length=512)
     api_key: Optional[str] = None
-    model_name: str
-    temperature: float = 0.7
-    max_tokens: int = 2048
+    model_name: str = Field(..., min_length=1, max_length=128)
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=2048, ge=64, le=32768)
 
 
 class LLMProviderResponse(BaseModel):
@@ -37,14 +37,14 @@ class ProviderHealthResponse(BaseModel):
 # --- Philosophy Schemas ---
 
 class SavePhilosophyRequest(BaseModel):
-    name: str
-    description: Optional[str] = None
-    target_zone2_pct: float = 80.0
-    max_weekly_volume_ramp_pct: float = 10.0
-    max_rpe_threshold: float = 8.5
-    min_rest_days_per_week: int = 2
-    primary_modality: str = "hybrid"
-    custom_context_notes: Optional[str] = None
+    name: str = Field(..., min_length=1, max_length=128)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    target_zone2_pct: float = Field(default=80.0, ge=0.0, le=100.0)
+    max_weekly_volume_ramp_pct: float = Field(default=10.0, ge=0.0, le=100.0)
+    max_rpe_threshold: float = Field(default=8.5, ge=1.0, le=10.0)
+    min_rest_days_per_week: int = Field(default=2, ge=0, le=7)
+    primary_modality: Literal["hybrid", "endurance", "strength"] = "hybrid"
+    custom_context_notes: Optional[str] = Field(default=None, max_length=4000)
 
 
 class CoachingPhilosophyResponse(BaseModel):
@@ -83,10 +83,14 @@ class CoachingCritiqueResponse(BaseModel):
 # --- Schedule & Planning Schemas ---
 
 class GeneratePlanRequest(BaseModel):
-    target_goal: str
+    target_goal: str = Field(..., min_length=1, max_length=500)
     horizon_days: int = Field(default=7, ge=7, le=14)
     available_days_per_week: int = Field(default=4, ge=1, le=7)
     philosophy_id: Optional[uuid.UUID] = None
+
+
+class ScheduledWorkoutUpdateRequest(BaseModel):
+    is_completed: bool
 
 
 class ScheduledWorkoutItem(BaseModel):
@@ -126,9 +130,9 @@ class LLMCritiqueOutput(BaseModel):
 
 class LLMWorkoutItem(BaseModel):
     day_offset: int = Field(..., ge=0, le=13)  # 0 for start_date, 1 for start_date + 1, etc.
-    discipline: str  # outdoor_run, indoor_row, erg_bike, strength, rest
+    discipline: Literal["outdoor_run", "indoor_row", "erg_bike", "strength", "rest"]
     title: str
-    planned_duration_min: int = 45
+    planned_duration_min: int = Field(default=45, ge=0, le=480)
     target_distance_m: Optional[float] = None
     target_zone: Optional[str] = None
     target_rpe: Optional[float] = None

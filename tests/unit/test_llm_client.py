@@ -1,6 +1,5 @@
 """Unit tests for Dual-Engine LLM clients (Gemini and llama.cpp)."""
 
-import json
 import httpx
 import pytest
 
@@ -17,7 +16,8 @@ async def test_gemini_client_test_connection_healthy(monkeypatch):
     client = GeminiClient(api_key="test-api-key", model_name="gemini-2.5-flash")
 
     def mock_handler(request: httpx.Request):
-        assert "key=test-api-key" in str(request.url)
+        assert request.headers.get("x-goog-api-key") == "test-api-key"
+        assert "key=" not in str(request.url)
         return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "{\"status\":\"ok\"}"}]}}]})
 
     mock_transport = httpx.MockTransport(mock_handler)

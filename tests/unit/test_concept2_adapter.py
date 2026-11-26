@@ -2,6 +2,8 @@
 
 import json
 from pathlib import Path
+import httpx
+import pytest
 from src.adapters.concept2 import Concept2Adapter
 
 
@@ -56,9 +58,6 @@ def test_normalize_concept2_bike_workout():
     assert normalized.avg_drag_factor == 105
     assert len(normalized.splits) == 0
 
-
-import httpx
-import pytest
 
 @pytest.mark.asyncio
 async def test_concept2_fetch_workouts_batch():
@@ -157,4 +156,67 @@ def test_normalize_concept2_ergdata_nested_intervals_and_strokes():
     assert normalized.heart_rate_samples[2].bpm == 110
     assert normalized.heart_rate_samples[3].elapsed_sec == 500.1
     assert normalized.heart_rate_samples[3].bpm == 126
+
+
+def test_concept2_short_interval_tenths_not_corrupted():
+    """Concept2 durations under 100s (e.g., 600 tenths = 60.0s, rest 900 tenths = 90.0s) must divide by 10 unconditionally."""
+    adapter = Concept2Adapter()
+    raw = {
+        "id": 777001,
+        "date_utc": "2026-11-21 10:00:00",
+        "time": 600,  # 60.0s (NOT 600s)
+        "type": "rower",
+        "distance": 300,
+        "workout": {
+            "intervals": [
+                {"time": 600, "distance": 300, "rest_time": 900},
+                {"time": 500, "distance": 250, "rest_time": 0},
+            ]
+        },
+    }
+    normalized = adapter.normalize_concept2_workout(raw)
+    assert normalized.total_duration_sec == 60.0
+    assert len(normalized.splits) == 3  # work 1, rest 1, work 2
+    assert normalized.splits[0].duration_sec == 60.0
+    assert normalized.splits[1].split_type == "rest"
+    assert normalized.splits[1].duration_sec == 90.0
+    assert normalized.splits[2].duration_sec == 50.0
+
+
+def test_concept2_bike_erg_pace_is_per_km():
+    """BikeErg avg_pace_sec_per_km is populated and avg_split_sec_per_500m is None."""
+    adapter = Concept2Adapter()
+    raw = {
+        "id": 888002,
+        "date_utc": "2026-11-21 12:00:00",
+        "time": 10500,  # 1050s for 10km -> 105.0 s/km
+        "type": "bike",
+        "distance": 10000,
+    }
+    normalized = adapter.normalize_concept2_workout(raw)
+    assert normalized.discipline == "erg_bike"
+    assert normalized.avg_pace_sec_per_km == 105.0
+    assert normalized.avg_split_sec_per_500m is None
+
+
+def test_concept2_missing_id_raises_value_error():
+    adapter = Concept2Adapter()
+    with pytest.raises(ValueError, match="missing required 'id'"):
+        adapter.normalize_concept2_workout({"date_utc": "2026-11-21 12:00:00", "time": 1000, "type": "rower"})
+
+
+@pytest.mark.asyncio
+async def test_concept2_propagates_http_errors():
+    def mock_handler(request: httpx.Request):
+        return httpx.Response(401, json={"error": "invalid_token"})
+
+    adapter = Concept2Adapter()
+    transport = httpx.MockTransport(mock_handler)
+    import unittest.mock as mock
+
+    with mock.patch("httpx.AsyncClient", return_value=httpx.AsyncClient(transport=transport)):
+        with pytest.raises(httpx.HTTPStatusError) as exc_info:
+            await adapter.fetch_workouts_batch("expired_token")
+        assert exc_info.value.response.status_code == 401
+
 

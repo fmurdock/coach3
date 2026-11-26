@@ -1,6 +1,6 @@
 """Personal Record (PR) detection and peak performance calculation engine."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 import uuid
 from sqlalchemy import select
@@ -11,8 +11,7 @@ from src.models.strength_set import StrengthSet
 from src.models.workout import WorkoutSession
 from src.schemas.analytics import PersonalRecordItem, WindowPreset
 from src.services.analytics_service import AnalyticsService
-
-KG_TO_LBS = 2.20462
+from src.services.metrics import KG_TO_LBS, calculate_epley_1rm, calculate_estimated_5rm
 
 
 def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
@@ -29,24 +28,13 @@ class PRDetectorService:
 
     @staticmethod
     def calculate_epley_1rm(weight: float, reps: int) -> Optional[float]:
-        """Calculates estimated 1RM using the standard Epley formula w * (1 + r / 30).
-        
-        Strictly capped at sets of 10 or fewer reps. Sets > 10 reps are muscular endurance.
-        """
-        if reps <= 0 or weight <= 0:
-            return 0.0
-        if reps > 10:
-            return None
-        if reps == 1:
-            return round(float(weight), 2)
-        return round(float(weight) * (1.0 + float(reps) / 30.0), 2)
+        """Calculates estimated 1RM using canonical Epley formula capped at 1 <= reps <= 10."""
+        return calculate_epley_1rm(weight, reps)
 
     @staticmethod
     def calculate_estimated_5rm(estimated_1rm: Optional[float]) -> Optional[float]:
         """Calculates estimated 5RM from estimated 1RM (1RM / 1.1667)."""
-        if not estimated_1rm or estimated_1rm <= 0:
-            return None
-        return round(estimated_1rm / 1.1667, 2)
+        return calculate_estimated_5rm(estimated_1rm)
 
     @staticmethod
     def match_endurance_milestone(discipline: str, distance_m: float) -> Optional[str]:
@@ -165,10 +153,10 @@ class PRDetectorService:
                 if current_reps is None or reps > current_reps[0]:
                     exercise_bests[ex_id]["repetition_pr"] = (float(reps), session_date, ex_name)
 
-        for ex_id, bests in exercise_bests.items():
+        for _ex_id, bests in exercise_bests.items():
             for m_type, (val, raw_achieved_at, ex_name) in bests.items():
-                achieved_at = ensure_utc(raw_achieved_at)
-                is_recent = (achieved_at >= window_start) if window_start and achieved_at else True
+                achieved_at = ensure_utc(raw_achieved_at) or datetime.now(timezone.utc)
+                is_recent = (achieved_at >= window_start) if window_start else True
                 if m_type == "estimated_1rm_pr":
                     prs.append(
                         PersonalRecordItem(
@@ -255,8 +243,8 @@ class PRDetectorService:
         }
 
         for (disc, milestone), (dur, raw_achieved_at, w) in cardio_bests.items():
-            achieved_at = ensure_utc(raw_achieved_at)
-            is_recent = (achieved_at >= window_start) if window_start and achieved_at else True
+            achieved_at = ensure_utc(raw_achieved_at) or datetime.now(timezone.utc)
+            is_recent = (achieved_at >= window_start) if window_start else True
             title = milestone_titles.get(milestone, f"{disc} {milestone}")
             time_display = self.format_time_mmss(dur)
 

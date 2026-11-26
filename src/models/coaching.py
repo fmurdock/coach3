@@ -3,20 +3,26 @@
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 import uuid
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, utc_now
-
-JSON_TYPE = JSON().with_variant(JSONB, "postgresql")
+from src.models.base import Base, JSON_TYPE, TimestampMixin, UUIDPrimaryKeyMixin
 
 
 class LLMProviderConfig(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "llm_provider_configs"
     __table_args__ = (
+        CheckConstraint("provider_type IN ('gemini', 'llama_cpp')", name="check_llm_provider_type"),
         Index("ix_llm_provider_user", "user_id"),
         Index("ix_llm_provider_active", "user_id", "is_active"),
+        Index(
+            "uq_llm_provider_active_user",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_active IS TRUE"),
+            sqlite_where=text("is_active = 1"),
+        ),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -33,7 +39,7 @@ class LLMProviderConfig(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=False,
     )
     api_key_encrypted: Mapped[Optional[str]] = mapped_column(
-        String(500),
+        Text,
         nullable=True,
     )
     model_name: Mapped[str] = mapped_column(
@@ -62,8 +68,19 @@ class LLMProviderConfig(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 class CoachingPhilosophy(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "coaching_philosophies"
     __table_args__ = (
+        CheckConstraint("target_zone2_pct >= 0 AND target_zone2_pct <= 100", name="check_phil_zone2_pct"),
+        CheckConstraint("max_rpe_threshold >= 1.0 AND max_rpe_threshold <= 10.0", name="check_phil_rpe"),
+        CheckConstraint("min_rest_days_per_week >= 0 AND min_rest_days_per_week <= 7", name="check_phil_rest_days"),
+        CheckConstraint("primary_modality IN ('endurance', 'strength', 'hybrid')", name="check_phil_modality"),
         Index("ix_coaching_philosophy_user", "user_id"),
         Index("ix_coaching_philosophy_active", "user_id", "is_active"),
+        Index(
+            "uq_coaching_philosophy_active_user",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_active IS TRUE"),
+            sqlite_where=text("is_active = 1"),
+        ),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(

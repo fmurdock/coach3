@@ -1,12 +1,15 @@
 """SQLAlchemy models for Strength Exercises and Aliases."""
 
-from datetime import datetime
+from typing import TYPE_CHECKING
 import uuid
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, String
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+
+if TYPE_CHECKING:
+    from src.models.strength_set import StrengthSet
 
 
 class StrengthExercise(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -21,11 +24,11 @@ class StrengthExercise(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     canonical_name: Mapped[str] = mapped_column(String(120), nullable=False)
-    slug: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    slug: Mapped[str] = mapped_column(String(120), nullable=False)
     category: Mapped[str] = mapped_column(String(50), nullable=False)
     primary_muscle_group: Mapped[str] = mapped_column(String(50), nullable=False)
-    is_bodyweight: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    default_unit: Mapped[str] = mapped_column(String(10), default="lbs", nullable=False)
+    is_bodyweight: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    default_unit: Mapped[str] = mapped_column(String(10), default="lbs", server_default="lbs", nullable=False)
 
     # Relationships
     aliases: Mapped[list["ExerciseAlias"]] = relationship(
@@ -37,7 +40,7 @@ class StrengthExercise(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     sets: Mapped[list["StrengthSet"]] = relationship(
         "StrengthSet",
         back_populates="exercise",
-        lazy="selectin",
+        lazy="select",
     )
 
 
@@ -52,7 +55,7 @@ class ExerciseAlias(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         ForeignKey("strength_exercises.id", ondelete="CASCADE"),
         nullable=False,
     )
-    alias: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    alias: Mapped[str] = mapped_column(String(120), nullable=False)
 
     # Relationships
     exercise: Mapped["StrengthExercise"] = relationship(

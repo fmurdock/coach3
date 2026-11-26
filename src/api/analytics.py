@@ -2,13 +2,11 @@
 
 from datetime import date
 from typing import Optional
-import uuid
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db
-from src.models.user import User
+from src.core.deps import get_or_create_default_user
 from src.schemas.analytics import (
     CardioAnalyticsResponse,
     DashboardMacroResponse,
@@ -32,22 +30,15 @@ async def get_dashboard_macro(
     end_date: Optional[date] = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Retrieve unified macro training volume: Cardio (Zone 2 vs Zone 5 VO2 max) and Resistance muscle group sets with top weights."""
+    """Retrieve unified macro training volume in the athlete's configured IANA timezone."""
     user = await get_or_create_default_user(db)
-    start_dt, end_dt = analytics_service.resolve_date_window(window, start_date, end_date)
-    return await analytics_service.get_macro_dashboard_volume(db, user.id, start_dt, end_dt)
-
-
-async def get_or_create_default_user(db: AsyncSession) -> User:
-    """Helper for single-user self-hosted mode: retrieves or seeds default user."""
-    res = await db.execute(select(User))
-    user = res.scalars().first()
-    if not user:
-        user = User(id=uuid.uuid4())
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-    return user
+    tz_name = user.timezone or "UTC"
+    start_dt, end_dt = analytics_service.resolve_date_window(
+        window, start_date, end_date, tz_name=tz_name
+    )
+    return await analytics_service.get_macro_dashboard_volume(
+        db, user.id, start_dt, end_dt, tz_name=tz_name
+    )
 
 
 @router.get("/cardio", response_model=CardioAnalyticsResponse)
@@ -59,8 +50,13 @@ async def get_cardio_analytics(
 ):
     """Retrieve detailed cardiovascular volume and Zone 2 trends."""
     user = await get_or_create_default_user(db)
-    start_dt, end_dt = analytics_service.resolve_date_window(window, start_date, end_date)
-    return await analytics_service.get_cardio_metrics(db, user.id, start_dt, end_dt)
+    tz_name = user.timezone or "UTC"
+    start_dt, end_dt = analytics_service.resolve_date_window(
+        window, start_date, end_date, tz_name=tz_name
+    )
+    return await analytics_service.get_cardio_metrics(
+        db, user.id, start_dt, end_dt, tz_name=tz_name
+    )
 
 
 @router.get("/strength", response_model=StrengthAnalyticsResponse)
@@ -72,7 +68,10 @@ async def get_strength_analytics(
 ):
     """Retrieve strength volume load, effective sets, and muscle group distributions."""
     user = await get_or_create_default_user(db)
-    start_dt, end_dt = analytics_service.resolve_date_window(window, start_date, end_date)
+    tz_name = user.timezone or "UTC"
+    start_dt, end_dt = analytics_service.resolve_date_window(
+        window, start_date, end_date, tz_name=tz_name
+    )
     return await analytics_service.get_strength_metrics(db, user.id, start_dt, end_dt)
 
 
@@ -85,27 +84,25 @@ async def get_unified_summary(
 ):
     """Retrieve unified summary across cardio and strength."""
     user = await get_or_create_default_user(db)
-    start_dt, end_dt = analytics_service.resolve_date_window(window, start_date, end_date)
+    tz_name = user.timezone or "UTC"
+    start_dt, end_dt = analytics_service.resolve_date_window(
+        window, start_date, end_date, tz_name=tz_name
+    )
 
-    cardio_metrics = await analytics_service.get_cardio_metrics(db, user.id, start_dt, end_dt)
+    cardio_metrics = await analytics_service.get_cardio_metrics(
+        db, user.id, start_dt, end_dt, tz_name=tz_name
+    )
     strength_metrics = await analytics_service.get_strength_metrics(db, user.id, start_dt, end_dt)
-
-    total_duration_hours = round(cardio_metrics.total_duration_hours, 2)
-    zone2_hours = cardio_metrics.zone2_duration_hours
-    zone2_pct = cardio_metrics.zone2_percentage
-    total_miles = cardio_metrics.total_distance_miles
-    total_volume_lbs = strength_metrics.total_volume_load_lbs
-    working_sets = strength_metrics.effective_working_sets
 
     return UnifiedVolumeSummary(
         start_date=start_dt,
         end_date=end_dt,
-        total_duration_hours=total_duration_hours,
-        zone2_duration_hours=zone2_hours,
-        zone2_percentage=zone2_pct,
-        total_cardio_distance_miles=total_miles,
-        total_strength_volume_lbs=total_volume_lbs,
-        effective_working_sets=working_sets,
+        total_duration_hours=round(cardio_metrics.total_duration_hours, 2),
+        zone2_duration_hours=cardio_metrics.zone2_duration_hours,
+        zone2_percentage=cardio_metrics.zone2_percentage,
+        total_cardio_distance_miles=cardio_metrics.total_distance_miles,
+        total_strength_volume_lbs=strength_metrics.total_volume_load_lbs,
+        effective_working_sets=strength_metrics.effective_working_sets,
         cardio=cardio_metrics,
         strength=strength_metrics,
     )
@@ -121,9 +118,12 @@ async def get_personal_records(
 ):
     """Retrieve personal records and peak performances across rolling time windows."""
     user = await get_or_create_default_user(db)
+    tz_name = user.timezone or "UTC"
     start_dt, end_dt = None, None
     if start_date and end_date:
-        start_dt, end_dt = analytics_service.resolve_date_window(None, start_date, end_date)
+        start_dt, end_dt = analytics_service.resolve_date_window(
+            None, start_date, end_date, tz_name=tz_name
+        )
 
     prs = await pr_detector.get_all_prs(
         db, user.id, window=window, start_time=start_dt, end_time=end_dt

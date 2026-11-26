@@ -14,7 +14,7 @@ from src.services.analytics_service import AnalyticsService
 async def test_resolve_date_window():
     service = AnalyticsService()
     now = datetime.now(timezone.utc)
-    
+
     # 7d window
     start_7d, end_7d = service.resolve_date_window(WindowPreset.SEVEN_DAYS)
     assert (end_7d - start_7d).days == 7
@@ -35,10 +35,10 @@ async def test_resolve_date_window():
 async def test_cardio_metrics_empty(db_session: AsyncSession, sample_user):
     user, _ = sample_user
     service = AnalyticsService()
-    
+
     start, end = service.resolve_date_window(WindowPreset.THIRTY_DAYS)
     res = await service.get_cardio_metrics(db_session, user.id, start, end)
-    
+
     assert res.total_distance_km == 0.0
     assert res.total_distance_miles == 0.0
     assert res.total_duration_hours == 0.0
@@ -274,13 +274,14 @@ async def test_strength_metrics_effective_sets_and_volume(db_session: AsyncSessi
 
 
 @pytest.mark.asyncio
-async def test_polar_pace_dynamic_variation_from_hr(db_session: AsyncSession, sample_user):
+async def test_polar_pace_never_fabricated_from_hr(db_session: AsyncSession, sample_user):
+    """When no speed stream, GPS, or splits exist, pace_sec must NOT be fabricated from HR."""
     from src.models.telemetry import HeartRateSample
+
     user, _ = sample_user
     service = AnalyticsService()
     now = datetime.now(timezone.utc)
 
-    # Polar run with varying heart rate samples and no splits/GPS
     run = WorkoutSession(
         id=uuid.uuid4(),
         user_id=user.id,
@@ -297,28 +298,198 @@ async def test_polar_pace_dynamic_variation_from_hr(db_session: AsyncSession, sa
     )
     db_session.add(run)
 
-    # Add 20 HR samples with clear cardiac elevation (surges)
     for i in range(20):
         sample_hr = 120 if i < 10 else 155
-        s = HeartRateSample(
-            workout_id=run.id,
-            timestamp_utc=now + timedelta(seconds=i * 10),
-            elapsed_sec=float(i * 10),
-            bpm=sample_hr,
+        db_session.add(
+            HeartRateSample(
+                workout_id=run.id,
+                timestamp_utc=now + timedelta(seconds=i * 10),
+                elapsed_sec=float(i * 10),
+                bpm=sample_hr,
+            )
         )
-        db_session.add(s)
 
     await db_session.commit()
 
     detail = await service.get_workout_detail_telemetry(db_session, run.id)
     assert detail is not None
     assert len(detail.time_series) == 20
+    assert detail.pace_source == "session_average"
+    assert all(pt.pace_sec is None for pt in detail.time_series)
 
-    paces = [pt.pace_sec for pt in detail.time_series]
-    # Pace should NOT be a flat line
-    assert min(paces) < max(paces)
-    # Higher HR points should have faster pace (lower sec/km) than lower HR points
-    assert paces[-1] < paces[0]
+
+@pytest.mark.asyncio
+async def test_cross_year_cardio_weeks_sorted_chronologically(db_session: AsyncSession, sample_user):
+    """Dec 29 (W52/W01) must precede Jan 12 chronologically rather than sorting by string 'W01' < 'W52'."""
+    user, _ = sample_user
+    service = AnalyticsService()
+
+    w_dec = WorkoutSession(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        provider="polar",
+        external_id="xyear-dec",
+        discipline="outdoor_run",
+        title="Late Dec Run",
+        start_time_utc=datetime(2025, 12, 22, 12, 0, tzinfo=timezone.utc),
+        total_duration_sec=1800.0,
+        active_duration_sec=1800.0,
+        total_distance_m=5000.0,
+        zone2_duration_sec=1500.0,
+    )
+    w_jan = WorkoutSession(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        provider="polar",
+        external_id="xyear-jan",
+        discipline="outdoor_run",
+        title="Early Jan Run",
+        start_time_utc=datetime(2026, 1, 12, 12, 0, tzinfo=timezone.utc),
+        total_duration_sec=1800.0,
+        active_duration_sec=1800.0,
+        total_distance_m=5000.0,
+        zone2_duration_sec=1500.0,
+    )
+    db_session.add_all([w_dec, w_jan])
+    await db_session.commit()
+
+    metrics = await service.get_cardio_metrics(
+        db_session,
+        user.id,
+        datetime(2025, 12, 1, tzinfo=timezone.utc),
+        datetime(2026, 1, 31, tzinfo=timezone.utc),
+    )
+    assert len(metrics.weekly_trend) == 2
+    assert "12/22" in metrics.weekly_trend[0].week_label
+    assert "01/12" in metrics.weekly_trend[1].week_label
+
+
+@pytest.mark.asyncio
+async def test_athlete_timezone_sunday_evening_bucketing(db_session: AsyncSession, sample_user):
+    """A Sunday 7 PM Pacific workout (Monday 03:00 UTC) must land in the previous Monday's local week."""
+    user, _ = sample_user
+    service = AnalyticsService()
+
+    # 2026-11-15 is Sunday; 7 PM PST (UTC-8) = 2026-11-16 03:00 UTC (Monday in UTC, Sunday in LA)
+    w_sun_la = WorkoutSession(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        provider="polar",
+        external_id="tz-sunday-la",
+        discipline="outdoor_run",
+        title="Sunday Evening Run",
+        start_time_utc=datetime(2026, 11, 16, 3, 0, tzinfo=timezone.utc),
+        total_duration_sec=1800.0,
+        active_duration_sec=1800.0,
+        total_distance_m=5000.0,
+        zone2_duration_sec=1500.0,
+    )
+    db_session.add(w_sun_la)
+    await db_session.commit()
+
+    macro_la = await service.get_macro_dashboard_volume(
+        db_session,
+        user.id,
+        datetime(2026, 11, 1, tzinfo=timezone.utc),
+        datetime(2026, 11, 30, tzinfo=timezone.utc),
+        tz_name="America/Los_Angeles",
+    )
+    # Local week Monday for Sunday Nov 15 is Nov 09
+    assert macro_la.cardio.weekly_trend[0].week_label == "Nov 09"
+
+    macro_utc = await service.get_macro_dashboard_volume(
+        db_session,
+        user.id,
+        datetime(2026, 11, 1, tzinfo=timezone.utc),
+        datetime(2026, 11, 30, tzinfo=timezone.utc),
+        tz_name="UTC",
+    )
+    assert macro_utc.cardio.weekly_trend[0].week_label == "Nov 16"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_epley_1rm_matches_pr_detector_and_pairs_top_exercise(db_session: AsyncSession, sample_user):
+    """Dashboard estimated_1rm_lbs must match PRDetector Epley 1RM and belong to the displayed top_exercise_name."""
+    from src.models.exercise import StrengthExercise
+    from src.models.strength_set import StrengthSet
+    from src.services.pr_detector import PRDetectorService
+
+    user, _ = sample_user
+    service = AnalyticsService()
+    pr_service = PRDetectorService()
+    now = datetime.now(timezone.utc)
+
+    sess = WorkoutSession(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        provider="coach3_gym",
+        external_id="epley-parity",
+        discipline="strength",
+        title="Push Day",
+        start_time_utc=now - timedelta(days=1),
+        total_duration_sec=1800.0,
+        active_duration_sec=1800.0,
+    )
+    bench = StrengthExercise(
+        id=uuid.uuid4(),
+        canonical_name="Barbell Bench Press",
+        slug="barbell-bench-press-parity",
+        category="barbell",
+        primary_muscle_group="chest",
+        is_bodyweight=False,
+    )
+    incline = StrengthExercise(
+        id=uuid.uuid4(),
+        canonical_name="Incline Barbell Bench Press",
+        slug="incline-bench-parity",
+        category="barbell",
+        primary_muscle_group="chest",
+        is_bodyweight=False,
+    )
+    db_session.add_all([sess, bench, incline])
+    await db_session.flush()
+
+    # Incline: 205 x 1 (1RM = 205.0, heavier single weight)
+    # Bench: 185 x 8 (Epley 1RM = 185 * (1 + 8/30) = 234.33 -> higher 1RM!)
+    db_session.add_all([
+        StrengthSet(
+            id=uuid.uuid4(),
+            workout_session_id=sess.id,
+            exercise_id=incline.id,
+            set_index=1,
+            reps_completed=1,
+            weight=205.0,
+            weight_unit="lbs",
+            is_warmup=False,
+            idempotency_key="p1",
+        ),
+        StrengthSet(
+            id=uuid.uuid4(),
+            workout_session_id=sess.id,
+            exercise_id=bench.id,
+            set_index=2,
+            reps_completed=8,
+            weight=185.0,
+            weight_unit="lbs",
+            is_warmup=False,
+            idempotency_key="p2",
+        ),
+    ])
+    await db_session.commit()
+
+    start, end = service.resolve_date_window(WindowPreset.THIRTY_DAYS)
+    macro = await service.get_macro_dashboard_volume(db_session, user.id, start, end)
+    push = next(m for m in macro.resistance if m.muscle_group == "push")
+
+    prs = await pr_service.get_all_prs(db_session, user.id, window=WindowPreset.ALL_TIME)
+    bench_pr = next(p for p in prs if p.exercise_name == "Barbell Bench Press" and p.milestone_type == "estimated_1rm_pr")
+
+    # Top exercise, weight, reps, and 1RM must all come from Bench 185 x 8 and match PRDetector identically!
+    assert push.top_exercise_name == "Barbell Bench Press"
+    assert push.top_weight_lbs == 185.0
+    assert push.top_reps == 8
+    assert push.estimated_1rm_lbs == bench_pr.record_value
+    assert push.estimated_1rm_lbs == 234.33
 
 
 @pytest.mark.asyncio

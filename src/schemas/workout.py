@@ -1,8 +1,8 @@
-"""Pydantic schemas for workout sessions and telemetry."""
+"""Pydantic schemas for workout sessions, updates, and telemetry."""
 
 from datetime import datetime
 import uuid
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class HeartRateSampleSchema(BaseModel):
@@ -66,15 +66,23 @@ class WorkoutSessionDetailResponse(WorkoutSessionResponse):
     user_notes: str | None = None
 
 
+class WorkoutUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    user_notes: str | None = Field(default=None, max_length=10000)
+
+
+class GPXUploadRequest(BaseModel):
+    gpx_xml: str = Field(..., min_length=1, max_length=10_000_000)
+
+
 class WorkoutTelemetryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     workout_id: uuid.UUID
-    heart_rate_samples: list[HeartRateSampleSchema]
-    gps_route_points: list[GPSRoutePointSchema]
-    splits: list[WorkoutSplitSchema]
+    heart_rate_samples: list[HeartRateSampleSchema] = Field(default_factory=list)
+    gps_route_points: list[GPSRoutePointSchema] = Field(default_factory=list)
+    splits: list[WorkoutSplitSchema] = Field(default_factory=list)
 
 
-# Feature 006: Revamped Workout Table & Detailed Telemetry Schemas
 class WorkoutTableRow(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
@@ -118,13 +126,13 @@ class NormalizedSample(BaseModel):
 
 class IntervalConsistencySet(BaseModel):
     set_index: int
-    points: list[NormalizedSample] = []
+    points: list[NormalizedSample] = Field(default_factory=list)
 
 
 class IntervalConsistencyAnalysis(BaseModel):
     is_consistent: bool = True
     pace_variance_pct: float = 0.0
-    superimposed_curves: list[IntervalConsistencySet] = []
+    superimposed_curves: list[IntervalConsistencySet] = Field(default_factory=list)
 
 
 class IntervalSplitDetail(BaseModel):
@@ -138,7 +146,7 @@ class IntervalSplitDetail(BaseModel):
     avg_pace_sec: float | None = None
     avg_power_watts: float | None = None
     avg_cadence_spm: float | None = None
-    samples: list[NormalizedSample] = []
+    samples: list[NormalizedSample] = Field(default_factory=list)
 
 
 class StrengthSetDetail(BaseModel):
@@ -167,9 +175,10 @@ class WorkoutDetailTelemetry(BaseModel):
     elevation_gain_m: float | None = None
     elevation_loss_m: float | None = None
     rest_distance_m: float | None = None
+    pace_source: str | None = None
     hr_zone_seconds: dict[str, float] | None = None
-    time_series: list[TelemetryPoint] = []
-    splits: list[IntervalSplitDetail] = []
-    strength_sets: list[StrengthSetDetail] = []
-    route_points: list[GPSRoutePointSchema] = []
+    time_series: list[TelemetryPoint] = Field(default_factory=list)
+    splits: list[IntervalSplitDetail] = Field(default_factory=list)
+    strength_sets: list[StrengthSetDetail] = Field(default_factory=list)
+    route_points: list[GPSRoutePointSchema] = Field(default_factory=list)
     interval_consistency: IntervalConsistencyAnalysis | None = None

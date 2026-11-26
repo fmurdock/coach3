@@ -164,7 +164,7 @@ async def test_get_macro_dashboard_volume(db_session: AsyncSession):
     assert push_vol.goal_progress_pct == 20.0
     assert push_vol.top_weight_lbs == 225.0
     assert push_vol.top_reps == 3
-    assert push_vol.estimated_1rm_lbs == 238.2  # 225 * (36 / 34)
+    assert push_vol.estimated_1rm_lbs == 247.5  # Canonical Epley: 225 * (1 + 3/30)
 
     legs_vol = next(m for m in macro.resistance if m.muscle_group == "legs")
     assert legs_vol.working_sets == 2

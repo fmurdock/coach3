@@ -1,7 +1,7 @@
 """Deterministic Natural Language Parsing Engine for Gym Mode."""
 
 import re
-from typing import Literal
+from typing import Any, Literal
 from src.schemas.gym import ExerciseRef, ParsedSetCandidate, ParsedStageResponse
 from src.services.exercise_catalog import catalog_service
 
@@ -80,7 +80,7 @@ class GymParser:
                 if score > 0:
                     scores.append(score)
 
-            for alt_entry, alt_score in alts:
+            for alt_entry, _alt_score in alts:
                 ref = ExerciseRef(
                     id=alt_entry.id,
                     canonical_name=alt_entry.canonical_name,
@@ -190,30 +190,39 @@ class GymParser:
 
         # 5. Extract Standard Weight (if not plate math and not pure bodyweight)
         if not plate_found and added_weight == 0.0:
-            weight_match = re.search(
-                r"\b(?:at|with|@)?\s*(\d+(?:\.\d+)?)\s*(lbs?|pounds?|kg|kilos?|s)?\b",
+            # 5a. Preposition-prefixed weight: "at 225", "with 100 kg", "@ 185 lbs"
+            prep_match = re.search(
+                r"(?:(?:\b(?:at|with)\s*)|@\s*)(\d+(?:\.\d+)?)\s*(lbs?|pounds?|kg|kilos?)?\b",
                 working_text,
             )
-            # Find weight that is not reps or sets
-            raw_weights = re.findall(
-                r"\b(?:at|with|@)\s*(\d+(?:\.\d+)?)\s*(lbs?|pounds?|kg|kilos?|s)?\b",
-                working_text,
-            )
-            if raw_weights:
-                val_str, u_str = raw_weights[0]
+            if prep_match:
+                val_str, u_str = prep_match.group(1), prep_match.group(2)
                 weight = float(val_str)
                 if u_str and ("kg" in u_str or "kilo" in u_str):
                     weight_unit = "kg"
-                else:
+                elif u_str and ("lb" in u_str or "pound" in u_str):
                     weight_unit = "lbs"
-                # Strip matched pattern
-                working_text = re.sub(r"\b(?:at|with|@)\s*" + re.escape(val_str) + r"\s*(?:lbs?|pounds?|kg|kilos?|s)?\b", " ", working_text)
+                else:
+                    weight_unit = default_unit
+                working_text = working_text[: prep_match.start()] + " " + working_text[prep_match.end() :]
             else:
-                # Plural dumbbell weight e.g. "with 70s"
-                db_weight_match = re.search(r"\b(?:with|at)\s*(\d+)s\b", working_text)
-                if db_weight_match:
-                    weight = float(db_weight_match.group(1))
-                    working_text = working_text.replace(db_weight_match.group(0), " ")
+                # 5b. Bare weight with explicit unit (no preposition required): "bench press 225 lbs 3x5", "225lb squat 5x5"
+                bare_match = re.search(
+                    r"\b(\d+(?:\.\d+)?)\s*(lbs?|pounds?|kg|kilos?)\b",
+                    working_text,
+                )
+                if bare_match:
+                    val_str, u_str = bare_match.group(1), bare_match.group(2)
+                    weight = float(val_str)
+                    weight_unit = "kg" if ("kg" in u_str or "kilo" in u_str) else "lbs"
+                    working_text = working_text[: bare_match.start()] + " " + working_text[bare_match.end() :]
+                else:
+                    # 5c. Plural dumbbell weight e.g. "with 70s"
+                    db_weight_match = re.search(r"\b(?:with|at)\s*(\d+)s\b", working_text)
+                    if db_weight_match:
+                        weight = float(db_weight_match.group(1))
+                        weight_unit = default_unit
+                        working_text = working_text[: db_weight_match.start()] + " " + working_text[db_weight_match.end() :]
 
         # 6. Sets and Reps extraction
         sets = 1
@@ -277,10 +286,6 @@ class GymParser:
         cleaned_exercise_str = " ".join(cleaned_exercise_str.split())
 
         entry, score, alts = self.catalog.find_match(cleaned_exercise_str, min_score=70.0)
-        if not entry and alts:
-            entry = alts[0][0]
-            score = alts[0][1]
-
         if not entry:
             return None, score, alts
 

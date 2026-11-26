@@ -124,16 +124,112 @@ async def test_get_dashboard_macro_endpoint(db_session: AsyncSession):
         assert hr_resp.status_code == 200
         assert hr_resp.json()["max_hr"] == 185
 
-        # 6. Verify /dashboard serves updated UI with no-cache headers
+        # 6. Verify /dashboard serves CSP-compliant shell + external dashboard.js with no-cache headers
         html_resp = await client.get("/dashboard")
         assert html_resp.status_code == 200
         assert "no-cache" in html_resp.headers.get("cache-control", "")
-        assert "renderRouteMapCard" in html_resp.text
-        assert "renderSessionSummaryAndZones" in html_resp.text
-        assert "renderStrengthSetsSection" in html_resp.text
+        assert "/static/js/dashboard.js" in html_resp.text
         assert "zone2MacroChart" in html_resp.text
         assert "vo2MacroChart" in html_resp.text
         assert "filter-start-date" in html_resp.text
-        assert "Workout Graph:" in html_resp.text
+
+        js_resp = await client.get("/static/js/dashboard.js")
+        assert js_resp.status_code == 200
+        assert "renderRouteMapCard" in js_resp.text
+        assert "renderSessionSummaryAndZones" in js_resp.text
+        assert "renderStrengthSetsSection" in js_resp.text
+        assert "Workout Graph:" in js_resp.text
 
     app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_hr_profile_validation_and_elite_resting_hr(db_session: AsyncSession):
+    """Inverted/overlapping HR zones return 422; elite resting_hr=28 is accepted."""
+    app.dependency_overrides[get_db] = lambda: db_session
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Inverted zone bounds -> 422
+        bad_inv = await client.put(
+            "/api/v1/profile/heart-rate",
+            json={
+                "resting_hr": 50,
+                "max_hr": 185,
+                "zone1_min": 120,
+                "zone1_max": 110,  # inverted!
+                "zone2_min": 120,
+                "zone2_max": 135,
+                "zone3_min": 135,
+                "zone3_max": 150,
+                "zone4_min": 150,
+                "zone4_max": 165,
+                "zone5_min": 165,
+                "zone5_max": 185,
+            },
+        )
+        assert bad_inv.status_code == 422
+
+        # Overlapping zones -> 422
+        bad_ovl = await client.put(
+            "/api/v1/profile/heart-rate",
+            json={
+                "resting_hr": 50,
+                "max_hr": 185,
+                "zone1_min": 90,
+                "zone1_max": 125,
+                "zone2_min": 115,  # overlaps zone1_max!
+                "zone2_max": 135,
+                "zone3_min": 135,
+                "zone3_max": 150,
+                "zone4_min": 150,
+                "zone4_max": 165,
+                "zone5_min": 165,
+                "zone5_max": 185,
+            },
+        )
+        assert bad_ovl.status_code == 422
+
+        # Elite athlete resting_hr=28 accepted!
+        ok_elite = await client.put(
+            "/api/v1/profile/heart-rate",
+            json={
+                "resting_hr": 28,
+                "max_hr": 185,
+                "zone1_min": 90,
+                "zone1_max": 111,
+                "zone2_min": 111,
+                "zone2_max": 130,
+                "zone3_min": 130,
+                "zone3_max": 148,
+                "zone4_min": 148,
+                "zone4_max": 167,
+                "zone5_min": 167,
+                "zone5_max": 185,
+            },
+        )
+        assert ok_elite.status_code == 200
+        assert ok_elite.json()["resting_hr"] == 28
+
+
+@pytest.mark.asyncio
+async def test_workouts_list_window_offset_warmup_exclusion_and_bounds(db_session: AsyncSession):
+    """Tests workouts list X-Total-Count, offset pagination, warmup exclusion, and bounded critique limit."""
+    await SeedService.seed_sample_workouts(db_session)
+
+    app.dependency_overrides[get_db] = lambda: db_session
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        r_page1 = await client.get("/api/v1/workouts?window=30d&limit=2&offset=0")
+        assert r_page1.status_code == 200
+        total = int(r_page1.headers["X-Total-Count"])
+        assert total >= 5
+        assert len(r_page1.json()) == 2
+
+        r_page2 = await client.get("/api/v1/workouts?window=30d&limit=2&offset=2")
+        assert r_page2.status_code == 200
+        assert r_page2.json()[0]["id"] != r_page1.json()[0]["id"]
+
+        # Critiques limit > 100 rejected with 422
+        r_bad_lim = await client.get("/api/v1/coaching/critiques/recent?limit=500")
+        assert r_bad_lim.status_code == 422
+

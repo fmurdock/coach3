@@ -1,14 +1,13 @@
 """Service for exercise taxonomy lookups, in-memory caching, and fuzzy alias resolution."""
 
-from typing import Any
 import uuid
 from rapidfuzz import fuzz, process
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.models.exercise import ExerciseAlias, StrengthExercise
-from src.scripts.seed_exercises import EXERCISE_DEFINITIONS
+from src.models.exercise import StrengthExercise
+from src.scripts.seed_exercises import EXERCISE_DEFINITIONS, exercise_uuid_for_slug
 
 
 class CatalogExerciseEntry:
@@ -52,7 +51,7 @@ class ExerciseCatalogService:
 
         for defn in EXERCISE_DEFINITIONS:
             # Deterministic namespace UUID based on slug
-            entry_id = uuid.uuid5(uuid.NAMESPACE_DNS, f"coach3.exercise.{defn['slug']}")
+            entry_id = exercise_uuid_for_slug(defn["slug"])
             entry = CatalogExerciseEntry(
                 id=entry_id,
                 canonical_name=defn["canonical_name"],

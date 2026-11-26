@@ -1,18 +1,23 @@
-"""API endpoints for managing integrations, OAuth flows, and triggering syncs."""
+"""API endpoints for managing integrations, OAuth flows (CSRF-protected), and triggering syncs."""
 
+from datetime import datetime, timedelta, timezone
+import logging
+import secrets
 import urllib.parse
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+import httpx
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.adapters.polar import PolarAdapter
 from src.adapters.concept2 import Concept2Adapter
+from src.adapters.polar import PolarAdapter
 from src.core.database import get_db
-from src.core.security import decrypt_token, encrypt_token
-from src.models.integration import IntegrationAccount, SyncAuditLog
-from src.models.user import User
+from src.core.deps import get_or_create_default_user
+from src.core.logging import redact_secrets
+from src.core.security import decrypt_token_safe, encrypt_token
+from src.models.integration import IntegrationAccount, OAuthState, SyncAuditLog
 from src.schemas.config import VerificationResult
 from src.schemas.integration import (
     AuthUrlResponse,
@@ -23,19 +28,16 @@ from src.schemas.integration import (
 from src.services.config_service import ConfigService
 from src.services.sync_service import run_sync_for_account
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/integrations", tags=["Integrations"])
 
+OAUTH_STATE_TTL_MINUTES = 10
 
-async def get_or_create_default_user(db: AsyncSession) -> User:
-    """Helper for single-user self-hosted mode: retrieves or seeds default user."""
-    res = await db.execute(select(User))
-    user = res.scalars().first()
-    if not user:
-        user = User(id=uuid.uuid4())
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-    return user
+
+def _ensure_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 @router.get("", response_model=list[IntegrationAccountResponse])
@@ -48,7 +50,10 @@ async def list_integrations(db: AsyncSession = Depends(get_db)):
 
 @router.get("/{provider}/auth-url", response_model=AuthUrlResponse)
 async def get_auth_url(provider: str, db: AsyncSession = Depends(get_db)):
-    state = str(uuid.uuid4())
+    if provider not in ("polar", "concept2"):
+        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
+
+    user = await get_or_create_default_user(db)
     cid, csec, redir, _ = await ConfigService.get_provider_credentials(db, provider)
     if not cid or not csec:
         raise HTTPException(
@@ -56,12 +61,25 @@ async def get_auth_url(provider: str, db: AsyncSession = Depends(get_db)):
             detail=f"{provider.capitalize()} credentials are not configured. Please enter Client ID & Secret in Settings.",
         )
 
+    now = datetime.now(timezone.utc)
+    # Prune expired OAuth states opportunistically
+    await db.execute(delete(OAuthState).where(OAuthState.expires_at < now))
+
+    state = secrets.token_urlsafe(32)
+    oauth_state = OAuthState(
+        state=state,
+        user_id=user.id,
+        provider=provider,
+        expires_at=now + timedelta(minutes=OAUTH_STATE_TTL_MINUTES),
+    )
+    db.add(oauth_state)
+    await db.flush()
+
+    adapter: PolarAdapter | Concept2Adapter
     if provider == "polar":
         adapter = PolarAdapter(client_id=cid, client_secret=csec, redirect_uri=redir)
-    elif provider == "concept2":
-        adapter = Concept2Adapter(client_id=cid, client_secret=csec, redirect_uri=redir)
     else:
-        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
+        adapter = Concept2Adapter(client_id=cid, client_secret=csec, redirect_uri=redir)
 
     return AuthUrlResponse(auth_url=adapter.get_authorization_url(state))
 
@@ -75,9 +93,15 @@ async def oauth_callback(
     error_description: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Handles OAuth 2.0 redirect callbacks from Polar and Concept2 and redirects to /config."""
+    """Handles OAuth 2.0 redirect callbacks from Polar and Concept2 with strict CSRF state validation."""
+    if provider not in ("polar", "concept2"):
+        return RedirectResponse(
+            url="/config?status=error&message=Unsupported+provider",
+            status_code=307,
+        )
+
     if error:
-        msg = error_description or error
+        msg = redact_secrets(error_description or error)[:200]
         encoded_msg = urllib.parse.quote_plus(msg)
         return RedirectResponse(
             url=f"/config?status=error&provider={provider}&message={encoded_msg}",
@@ -90,7 +114,40 @@ async def oauth_callback(
             status_code=307,
         )
 
-    user = await get_or_create_default_user(db)
+    if not state:
+        return RedirectResponse(
+            url=f"/config?status=error&provider={provider}&message=Missing+OAuth+state+parameter",
+            status_code=307,
+        )
+
+    # Atomically verify and consume single-use OAuth state nonce
+    now = datetime.now(timezone.utc)
+    st_res = await db.execute(
+        select(OAuthState).where(
+            OAuthState.state == state,
+            OAuthState.provider == provider,
+        )
+    )
+    stored_state = st_res.scalar_one_or_none()
+    if not stored_state:
+        logger.warning("Rejected OAuth callback for %s with unknown or replayed state", provider)
+        return RedirectResponse(
+            url=f"/config?status=error&provider={provider}&message=Invalid+or+replayed+OAuth+state",
+            status_code=307,
+        )
+
+    is_expired = _ensure_utc(stored_state.expires_at) < now
+    state_user_id = stored_state.user_id
+    await db.delete(stored_state)
+    await db.flush()
+
+    if is_expired:
+        logger.warning("Rejected expired OAuth state for %s", provider)
+        return RedirectResponse(
+            url=f"/config?status=error&provider={provider}&message=OAuth+authorization+expired.+Please+try+again.",
+            status_code=307,
+        )
+
     cid, csec, redir, _ = await ConfigService.get_provider_credentials(db, provider)
     if not cid or not csec:
         return RedirectResponse(
@@ -98,15 +155,11 @@ async def oauth_callback(
             status_code=307,
         )
 
-    if provider == "polar":
-        adapter = PolarAdapter(client_id=cid, client_secret=csec, redirect_uri=redir)
-    elif provider == "concept2":
-        adapter = Concept2Adapter(client_id=cid, client_secret=csec, redirect_uri=redir)
-    else:
-        return RedirectResponse(
-            url="/config?status=error&message=Unsupported+provider",
-            status_code=307,
-        )
+    adapter: PolarAdapter | Concept2Adapter = (
+        PolarAdapter(client_id=cid, client_secret=csec, redirect_uri=redir)
+        if provider == "polar"
+        else Concept2Adapter(client_id=cid, client_secret=csec, redirect_uri=redir)
+    )
 
     try:
         token_data = await adapter.exchange_code(code)
@@ -114,14 +167,14 @@ async def oauth_callback(
         refresh_token = token_data.get("refresh_token")
         account_id = str(token_data.get("x_user_id") or token_data.get("user_id") or uuid.uuid4())
 
-        if provider == "polar":
+        if provider == "polar" and isinstance(adapter, PolarAdapter):
             try:
                 await adapter.register_user(access_token, account_id)
-            except Exception:
-                pass
+            except Exception as reg_exc:
+                logger.warning("Polar user registration notice: %s", redact_secrets(str(reg_exc)))
 
         q = select(IntegrationAccount).where(
-            IntegrationAccount.user_id == user.id,
+            IntegrationAccount.user_id == state_user_id,
             IntegrationAccount.provider == provider,
         )
         res = await db.execute(q)
@@ -130,7 +183,7 @@ async def oauth_callback(
         if not account:
             account = IntegrationAccount(
                 id=uuid.uuid4(),
-                user_id=user.id,
+                user_id=state_user_id,
                 provider=provider,
                 account_id=account_id,
                 encrypted_access_token=encrypt_token(access_token),
@@ -145,15 +198,15 @@ async def oauth_callback(
                 account.encrypted_refresh_token = encrypt_token(refresh_token)
             account.is_active = True
 
-        await db.commit()
+        await db.flush()
         return RedirectResponse(
             url=f"/config?status=connected&provider={provider}",
             status_code=307,
         )
     except Exception as exc:
-        encoded_err = urllib.parse.quote_plus(str(exc))
+        logger.error("OAuth callback exchange failed for %s: %s", provider, redact_secrets(str(exc)))
         return RedirectResponse(
-            url=f"/config?status=error&provider={provider}&message={encoded_err}",
+            url=f"/config?status=error&provider={provider}&message=Authorization+token+exchange+failed",
             status_code=307,
         )
 
@@ -164,8 +217,18 @@ async def verify_provider_connection(
     db: AsyncSession = Depends(get_db),
 ):
     """Pings provider API, auto-refreshes expired tokens, and reports connection health."""
+    if provider not in ("polar", "concept2"):
+        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
+
     user = await get_or_create_default_user(db)
-    cid, csec, redir, _ = await ConfigService.get_provider_credentials(db, provider)
+    cid, csec, redir, source = await ConfigService.get_provider_credentials(db, provider)
+    if source == "decryption_error":
+        return VerificationResult(
+            provider=provider,
+            is_connected=False,
+            status="error",
+            error_message="Stored client credentials could not be decrypted with ENCRYPTION_KEY. Please re-enter them in Settings.",
+        )
     if not cid or not csec:
         return VerificationResult(
             provider=provider,
@@ -177,7 +240,7 @@ async def verify_provider_connection(
     q = select(IntegrationAccount).where(
         IntegrationAccount.user_id == user.id,
         IntegrationAccount.provider == provider,
-        IntegrationAccount.is_active == True,
+        IntegrationAccount.is_active.is_(True),
     )
     res = await db.execute(q)
     account = res.scalar_one_or_none()
@@ -189,32 +252,42 @@ async def verify_provider_connection(
             error_message="No authorized account found. Please click 'Connect' to complete OAuth.",
         )
 
-    access_token = decrypt_token(account.encrypted_access_token)
+    access_token, token_err = decrypt_token_safe(account.encrypted_access_token, context=f"{provider}_access_token")
+    if token_err or not access_token:
+        return VerificationResult(
+            provider=provider,
+            is_connected=False,
+            status="error",
+            last_sync_at=account.last_sync_at,
+            error_message="Stored OAuth token could not be decrypted. Please re-authorize via Connect.",
+        )
+
     if provider == "polar":
-        adapter = PolarAdapter(client_id=cid, client_secret=csec, redirect_uri=redir)
-        diag = await adapter.verify_connection(access_token, user_id=account.account_id)
-    elif provider == "concept2":
-        adapter = Concept2Adapter(client_id=cid, client_secret=csec, redirect_uri=redir)
-        diag = await adapter.verify_connection(access_token)
+        polar_adapter = PolarAdapter(client_id=cid, client_secret=csec, redirect_uri=redir)
+        diag = await polar_adapter.verify_connection(access_token, user_id=account.account_id)
+        adapter: PolarAdapter | Concept2Adapter = polar_adapter
     else:
-        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
+        c2_adapter = Concept2Adapter(client_id=cid, client_secret=csec, redirect_uri=redir)
+        diag = await c2_adapter.verify_connection(access_token)
+        adapter = c2_adapter
 
     # If expired and refresh token exists, attempt refresh
     if diag["status"] == "expired" and account.encrypted_refresh_token:
-        refresh_tok = decrypt_token(account.encrypted_refresh_token)
-        try:
-            new_tokens = await adapter.refresh_access_token(refresh_tok)
-            if "access_token" in new_tokens:
-                account.encrypted_access_token = encrypt_token(new_tokens["access_token"])
-                if "refresh_token" in new_tokens:
-                    account.encrypted_refresh_token = encrypt_token(new_tokens["refresh_token"])
-                await db.commit()
-                if provider == "polar":
-                    diag = await adapter.verify_connection(new_tokens["access_token"], user_id=account.account_id)
-                else:
-                    diag = await adapter.verify_connection(new_tokens["access_token"])
-        except Exception:
-            pass
+        refresh_tok, ref_err = decrypt_token_safe(account.encrypted_refresh_token, context=f"{provider}_refresh_token")
+        if not ref_err and refresh_tok:
+            try:
+                new_tokens = await adapter.refresh_access_token(refresh_tok)
+                if "access_token" in new_tokens:
+                    account.encrypted_access_token = encrypt_token(new_tokens["access_token"])
+                    if "refresh_token" in new_tokens:
+                        account.encrypted_refresh_token = encrypt_token(new_tokens["refresh_token"])
+                    await db.flush()
+                    if isinstance(adapter, PolarAdapter):
+                        diag = await adapter.verify_connection(new_tokens["access_token"], user_id=account.account_id)
+                    else:
+                        diag = await adapter.verify_connection(new_tokens["access_token"])
+            except Exception as ref_exc:
+                logger.warning("Token refresh failed during verify for %s: %s", provider, redact_secrets(str(ref_exc)))
 
     return VerificationResult(
         provider=provider,
@@ -232,25 +305,38 @@ async def exchange_oauth_code(
     payload: CodeExchangeRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    user = await get_or_create_default_user(db)
-    cid, csec, redir, _ = await ConfigService.get_provider_credentials(db, provider)
-    if provider == "polar":
-        adapter = PolarAdapter(client_id=cid, client_secret=csec, redirect_uri=redir)
-    elif provider == "concept2":
-        adapter = Concept2Adapter(client_id=cid, client_secret=csec, redirect_uri=redir)
-    else:
+    if provider not in ("polar", "concept2"):
         raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
 
-    token_data = await adapter.exchange_code(payload.code)
+    user = await get_or_create_default_user(db)
+    cid, csec, redir, _ = await ConfigService.get_provider_credentials(db, provider)
+    if not cid or not csec:
+        raise HTTPException(status_code=400, detail=f"{provider.capitalize()} client credentials not configured")
+
+    adapter: PolarAdapter | Concept2Adapter = (
+        PolarAdapter(client_id=cid, client_secret=csec, redirect_uri=redir)
+        if provider == "polar"
+        else Concept2Adapter(client_id=cid, client_secret=csec, redirect_uri=redir)
+    )
+
+    try:
+        token_data = await adapter.exchange_code(payload.code)
+    except httpx.HTTPError as exc:
+        logger.error("OAuth code exchange HTTP failure for %s: %s", provider, redact_secrets(str(exc)))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to exchange authorization code with provider.",
+        ) from exc
+
     access_token = token_data.get("access_token", "")
     refresh_token = token_data.get("refresh_token")
     account_id = str(token_data.get("x_user_id") or token_data.get("user_id") or uuid.uuid4())
 
-    if provider == "polar":
+    if isinstance(adapter, PolarAdapter):
         try:
             await adapter.register_user(access_token, account_id)
-        except Exception:
-            pass
+        except Exception as reg_exc:
+            logger.warning("Polar user registration notice: %s", redact_secrets(str(reg_exc)))
 
     q = select(IntegrationAccount).where(
         IntegrationAccount.user_id == user.id,
@@ -277,13 +363,16 @@ async def exchange_oauth_code(
             account.encrypted_refresh_token = encrypt_token(refresh_token)
         account.is_active = True
 
-    await db.commit()
+    await db.flush()
     await db.refresh(account)
     return account
 
 
-@router.post("/{provider}/sync", response_model=SyncAuditLogResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/{provider}/sync", response_model=SyncAuditLogResponse, status_code=status.HTTP_200_OK)
 async def trigger_sync(provider: str, db: AsyncSession = Depends(get_db)):
+    if provider not in ("polar", "concept2"):
+        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
+
     user = await get_or_create_default_user(db)
     q = select(IntegrationAccount).where(
         IntegrationAccount.user_id == user.id,
@@ -300,8 +389,16 @@ async def trigger_sync(provider: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/sync-logs", response_model=list[SyncAuditLogResponse])
-async def list_sync_logs(limit: int = 20, db: AsyncSession = Depends(get_db)):
+async def list_sync_logs(
+    limit: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
     user = await get_or_create_default_user(db)
-    q = select(SyncAuditLog).where(SyncAuditLog.user_id == user.id).order_by(SyncAuditLog.started_at.desc()).limit(limit)
+    q = (
+        select(SyncAuditLog)
+        .where(SyncAuditLog.user_id == user.id)
+        .order_by(SyncAuditLog.started_at.desc())
+        .limit(limit)
+    )
     res = await db.execute(q)
     return res.scalars().all()

@@ -1,15 +1,16 @@
 """FastAPI endpoints for Adaptive AI Coaching Engine, Dual-Engine LLMs, and Philosophies."""
 
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import and_, desc, select, update
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.core.database import get_db
+from src.core.deps import get_or_create_default_user
 from src.core.security import encrypt_token
 from src.models.coaching import (
     CoachingCritique,
@@ -18,7 +19,6 @@ from src.models.coaching import (
     ScheduledWorkout,
     TrainingSchedulePlan,
 )
-from src.models.user import User
 from src.schemas.coaching import (
     AnalyzeWorkoutRequest,
     CoachingCritiqueResponse,
@@ -29,9 +29,10 @@ from src.schemas.coaching import (
     SavePhilosophyRequest,
     SaveProviderRequest,
     ScheduledWorkoutItem,
+    ScheduledWorkoutUpdateRequest,
     TrainingSchedulePlanResponse,
 )
-from src.services.coaching_service import CoachingService
+from src.services.coaching_service import CoachingBusyError, CoachingService
 from src.services.llm_client import get_llm_client_for_config
 from src.services.philosophy_service import PhilosophyService
 
@@ -39,16 +40,20 @@ router = APIRouter(prefix="/api/v1/coaching", tags=["Adaptive AI Coaching"])
 coaching_service = CoachingService()
 
 
-async def get_or_create_default_user(db: AsyncSession) -> User:
-    """Helper for single-user self-hosted mode: retrieves or seeds default user."""
-    res = await db.execute(select(User))
-    user = res.scalars().first()
-    if not user:
-        user = User(id=uuid.uuid4())
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-    return user
+def _to_scheduled_item(w: ScheduledWorkout) -> ScheduledWorkoutItem:
+    return ScheduledWorkoutItem(
+        id=w.id,
+        target_date=w.target_date,
+        discipline=w.discipline,
+        title=w.title,
+        planned_duration_min=w.planned_duration_min,
+        target_distance_m=float(w.target_distance_m) if w.target_distance_m is not None else None,
+        target_zone=w.target_zone,
+        target_rpe=float(w.target_rpe) if w.target_rpe is not None else None,
+        strength_exercises=w.strength_exercises,
+        notes=w.notes,
+        is_completed=w.is_completed,
+    )
 
 
 # --- Provider Endpoints ---
@@ -84,7 +89,6 @@ async def save_provider(payload: SaveProviderRequest, db: AsyncSession = Depends
     """Creates or updates an LLM provider configuration."""
     user = await get_or_create_default_user(db)
 
-    # Check if provider config of this type already exists
     stmt = select(LLMProviderConfig).where(
         and_(
             LLMProviderConfig.user_id == user.id,
@@ -101,7 +105,7 @@ async def save_provider(payload: SaveProviderRequest, db: AsyncSession = Depends
         existing.max_tokens = payload.max_tokens
         if payload.api_key:
             existing.api_key_encrypted = encrypt_token(payload.api_key)
-        await db.commit()
+        await db.flush()
         await db.refresh(existing)
         return LLMProviderResponse(
             id=existing.id,
@@ -114,7 +118,6 @@ async def save_provider(payload: SaveProviderRequest, db: AsyncSession = Depends
             has_api_key=bool(existing.api_key_encrypted),
         )
 
-    # Check if any provider is active; if not, activate this one
     stmt_any_active = select(LLMProviderConfig).where(
         and_(
             LLMProviderConfig.user_id == user.id,
@@ -136,7 +139,7 @@ async def save_provider(payload: SaveProviderRequest, db: AsyncSession = Depends
         is_active=not has_active,
     )
     db.add(new_provider)
-    await db.commit()
+    await db.flush()
     await db.refresh(new_provider)
 
     return LLMProviderResponse(
@@ -176,7 +179,7 @@ async def activate_provider(provider_id: uuid.UUID, db: AsyncSession = Depends(g
     )
 
     provider.is_active = True
-    await db.commit()
+    await db.flush()
     await db.refresh(provider)
 
     return LLMProviderResponse(
@@ -209,14 +212,18 @@ async def test_provider_health(provider_id: uuid.UUID, db: AsyncSession = Depend
             detail=f"Provider {provider_id} not found",
         )
 
-    client = get_llm_client_for_config(
-        provider_type=provider.provider_type,
-        endpoint_url=provider.endpoint_url,
-        api_key_encrypted=provider.api_key_encrypted,
-        model_name=provider.model_name,
-        temperature=float(provider.temperature),
-        max_tokens=provider.max_tokens,
-    )
+    try:
+        client = get_llm_client_for_config(
+            provider_type=provider.provider_type,
+            endpoint_url=provider.endpoint_url,
+            api_key_encrypted=provider.api_key_encrypted,
+            model_name=provider.model_name,
+            temperature=float(provider.temperature),
+            max_tokens=provider.max_tokens,
+        )
+    except ValueError as exc:
+        return ProviderHealthResponse(status="invalid_credentials", latency_ms=0.0, message=str(exc))
+
     return await client.test_connection()
 
 
@@ -282,7 +289,7 @@ async def activate_philosophy(philosophy_id: uuid.UUID, db: AsyncSession = Depen
             is_active=phil.is_active,
         )
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
 
 
 # --- Analysis & Planning Endpoints ---
@@ -292,7 +299,6 @@ async def analyze_workout(payload: AnalyzeWorkoutRequest, db: AsyncSession = Dep
     """Runs retrospective workout analysis against active coaching philosophy."""
     user = await get_or_create_default_user(db)
 
-    # Optional philosophy override
     phil = None
     if payload.philosophy_id:
         stmt = select(CoachingPhilosophy).where(
@@ -339,13 +345,15 @@ async def analyze_workout(payload: AnalyzeWorkoutRequest, db: AsyncSession = Dep
             recommendations=critique.recommendations,
             created_at=critique.created_at,
         )
+    except CoachingBusyError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except RuntimeError as e:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"LLM inference error: {str(e)}",
-        )
+        ) from e
 
 
 @router.post("/plan", response_model=TrainingSchedulePlanResponse)
@@ -377,23 +385,8 @@ async def generate_forward_plan(payload: GeneratePlanRequest, db: AsyncSession =
             horizon_days=payload.horizon_days,
             available_days_per_week=payload.available_days_per_week,
             philosophy=phil,
+            tz_name=user.timezone or "UTC",
         )
-        workouts = [
-            ScheduledWorkoutItem(
-                id=w.id,
-                target_date=w.target_date,
-                discipline=w.discipline,
-                title=w.title,
-                planned_duration_min=w.planned_duration_min,
-                target_distance_m=float(w.target_distance_m) if w.target_distance_m is not None else None,
-                target_zone=w.target_zone,
-                target_rpe=float(w.target_rpe) if w.target_rpe is not None else None,
-                strength_exercises=w.strength_exercises,
-                notes=w.notes,
-                is_completed=w.is_completed,
-            )
-            for w in plan.scheduled_workouts
-        ]
         return TrainingSchedulePlanResponse(
             id=plan.id,
             target_goal=plan.target_goal,
@@ -402,15 +395,17 @@ async def generate_forward_plan(payload: GeneratePlanRequest, db: AsyncSession =
             horizon_days=plan.horizon_days,
             summary_markdown=plan.summary_markdown,
             status=plan.status,
-            scheduled_workouts=workouts,
+            scheduled_workouts=[_to_scheduled_item(w) for w in plan.scheduled_workouts],
         )
+    except CoachingBusyError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except RuntimeError as e:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"LLM inference error: {str(e)}",
-        )
+        ) from e
 
 
 @router.get("/plans/active", response_model=TrainingSchedulePlanResponse)
@@ -437,22 +432,6 @@ async def get_active_plan(db: AsyncSession = Depends(get_db)):
             detail="No active training schedule plan found",
         )
 
-    workouts = [
-        ScheduledWorkoutItem(
-            id=w.id,
-            target_date=w.target_date,
-            discipline=w.discipline,
-            title=w.title,
-            planned_duration_min=w.planned_duration_min,
-            target_distance_m=float(w.target_distance_m) if w.target_distance_m is not None else None,
-            target_zone=w.target_zone,
-            target_rpe=float(w.target_rpe) if w.target_rpe is not None else None,
-            strength_exercises=w.strength_exercises,
-            notes=w.notes,
-            is_completed=w.is_completed,
-        )
-        for w in plan.scheduled_workouts
-    ]
     return TrainingSchedulePlanResponse(
         id=plan.id,
         target_goal=plan.target_goal,
@@ -461,13 +440,45 @@ async def get_active_plan(db: AsyncSession = Depends(get_db)):
         horizon_days=plan.horizon_days,
         summary_markdown=plan.summary_markdown,
         status=plan.status,
-        scheduled_workouts=workouts,
+        scheduled_workouts=[_to_scheduled_item(w) for w in plan.scheduled_workouts],
     )
 
 
+@router.patch("/scheduled-workouts/{scheduled_workout_id}", response_model=ScheduledWorkoutItem)
+async def update_scheduled_workout(
+    scheduled_workout_id: uuid.UUID,
+    payload: ScheduledWorkoutUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Toggle completion status on a planned workout item."""
+    user = await get_or_create_default_user(db)
+    stmt = (
+        select(ScheduledWorkout)
+        .join(TrainingSchedulePlan, ScheduledWorkout.plan_id == TrainingSchedulePlan.id)
+        .where(
+            ScheduledWorkout.id == scheduled_workout_id,
+            TrainingSchedulePlan.user_id == user.id,
+        )
+    )
+    res = await db.execute(stmt)
+    scheduled = res.scalar_one_or_none()
+    if not scheduled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scheduled workout not found",
+        )
+    scheduled.is_completed = payload.is_completed
+    await db.flush()
+    await db.refresh(scheduled)
+    return _to_scheduled_item(scheduled)
+
+
 @router.get("/critiques/recent", response_model=List[CoachingCritiqueResponse])
-async def list_recent_critiques(limit: int = 5, db: AsyncSession = Depends(get_db)):
-    """Retrieves recent workout critiques."""
+async def list_recent_critiques(
+    limit: int = Query(default=5, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieves recent workout critiques (bounded 1..100)."""
     user = await get_or_create_default_user(db)
     stmt = (
         select(CoachingCritique)

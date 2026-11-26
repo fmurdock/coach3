@@ -4,7 +4,7 @@ Handles CRUD, seeding standard coaching presets, activating philosophies,
 and managing manual athlete context notes.
 """
 
-from typing import List, Optional
+from typing import List
 import uuid
 
 from sqlalchemy import and_, select, update
@@ -85,7 +85,7 @@ class PhilosophyService:
                 is_active=(i == 0),  # First preset active by default
             )
             session.add(phil)
-        await session.commit()
+        await session.flush()
 
     @classmethod
     async def list_philosophies(
@@ -106,7 +106,6 @@ class PhilosophyService:
         cls, session: AsyncSession, user_id: uuid.UUID, data: SavePhilosophyRequest
     ) -> CoachingPhilosophy:
         """Creates or updates a philosophy."""
-        # Check if philosophy with same name exists for this user
         stmt = select(CoachingPhilosophy).where(
             and_(
                 CoachingPhilosophy.user_id == user_id,
@@ -117,14 +116,15 @@ class PhilosophyService:
         existing = res.scalar_one_or_none()
 
         if existing:
-            existing.description = data.description
+            if data.description is not None:
+                existing.description = data.description
             existing.target_zone2_pct = data.target_zone2_pct
             existing.max_weekly_volume_ramp_pct = data.max_weekly_volume_ramp_pct
             existing.max_rpe_threshold = data.max_rpe_threshold
             existing.min_rest_days_per_week = data.min_rest_days_per_week
             existing.primary_modality = data.primary_modality
             existing.custom_context_notes = data.custom_context_notes
-            await session.commit()
+            await session.flush()
             await session.refresh(existing)
             return existing
 
@@ -142,7 +142,7 @@ class PhilosophyService:
             is_active=False,
         )
         session.add(phil)
-        await session.commit()
+        await session.flush()
         await session.refresh(phil)
         return phil
 
@@ -162,7 +162,6 @@ class PhilosophyService:
         if not phil:
             raise ValueError(f"Philosophy {philosophy_id} not found.")
 
-        # Deactivate all
         await session.execute(
             update(CoachingPhilosophy)
             .where(CoachingPhilosophy.user_id == user_id)
@@ -170,6 +169,6 @@ class PhilosophyService:
         )
 
         phil.is_active = True
-        await session.commit()
+        await session.flush()
         await session.refresh(phil)
         return phil

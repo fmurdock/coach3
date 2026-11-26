@@ -1,12 +1,16 @@
 """Telemetry streams: Heart rate samples, GPS route points, and interval splits."""
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 import uuid
 from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, Integer, String
 from sqlalchemy.dialects.postgresql import DOUBLE_PRECISION, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.base import Base, UUIDPrimaryKeyMixin
+
+if TYPE_CHECKING:
+    from src.models.workout import WorkoutSession
 
 
 class HeartRateSample(Base):

@@ -54,10 +54,14 @@ class ParsedStageResponse(BaseModel):
 
 class CommitSetsRequest(BaseModel):
     """Client request to persist confirmed sets to a workout session."""
-    idempotency_key: str = Field(..., min_length=1, description="Client generated UUID")
+    idempotency_key: str = Field(..., min_length=1, max_length=100, description="Client generated UUID")
     raw_transcript: str | None = None
     confidence_score: float | None = None
     was_edited: bool = False
+    original_parsed_sets: list[ParsedSetCandidate] | None = Field(
+        default=None,
+        description="Unedited parser output prior to user adjustments (for voice audit diffing)",
+    )
     sets: list[ParsedSetCandidate] = Field(..., min_length=1)
 
 

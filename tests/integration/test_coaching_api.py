@@ -3,7 +3,6 @@
 from datetime import datetime, timedelta, timezone
 import json
 import uuid
-import httpx
 from httpx import ASGITransport, AsyncClient
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -90,9 +89,9 @@ async def test_provider_management_api(db_session: AsyncSession, sample_user):
         resp = await client.get("/api/v1/coaching/providers")
         providers = resp.json()
         g = next(p for p in providers if p["id"] == gemini_id)
-        l = next(p for p in providers if p["id"] == llama_id)
+        llama_p = next(p for p in providers if p["id"] == llama_id)
         assert g["is_active"] is False
-        assert l["is_active"] is True
+        assert llama_p["is_active"] is True
 
 
 @pytest.mark.asyncio

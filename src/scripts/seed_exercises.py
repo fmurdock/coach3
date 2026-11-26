@@ -1,6 +1,7 @@
 """Seed script populating canonical strength exercises and aliases."""
 
 import asyncio
+from typing import Any
 import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.database import async_session_factory
 from src.models.exercise import ExerciseAlias, StrengthExercise
 
-EXERCISE_DEFINITIONS = [
+EXERCISE_DEFINITIONS: list[dict[str, Any]] = [
     # --- Barbell ---
     {
         "canonical_name": "Barbell Back Squat",
@@ -563,7 +564,7 @@ EXERCISE_DEFINITIONS = [
         "primary_muscle_group": "quadriceps",
         "is_bodyweight": False,
         "default_unit": "lbs",
-        "aliases": ["smith squat", "smith machine squats", "smith squat"],
+        "aliases": ["smith squat", "smith machine squats"],
     },
     {
         "canonical_name": "Smith Machine Bench Press",
@@ -586,10 +587,14 @@ EXERCISE_DEFINITIONS = [
 ]
 
 
+def exercise_uuid_for_slug(slug: str) -> uuid.UUID:
+    """Return the canonical deterministic UUIDv5 for a strength exercise slug."""
+    return uuid.uuid5(uuid.NAMESPACE_DNS, f"coach3.exercise.{slug}")
+
+
 async def seed_exercises(session: AsyncSession) -> int:
-    """Seeds exercise definitions and aliases idempotently."""
+    """Seeds exercise definitions and aliases idempotently using deterministic UUIDv5 IDs."""
     created_count = 0
-    alias_count = 0
 
     for defn in EXERCISE_DEFINITIONS:
         q = select(StrengthExercise).where(StrengthExercise.slug == defn["slug"])
@@ -598,7 +603,7 @@ async def seed_exercises(session: AsyncSession) -> int:
 
         if not exercise:
             exercise = StrengthExercise(
-                id=uuid.uuid4(),
+                id=exercise_uuid_for_slug(defn["slug"]),
                 canonical_name=defn["canonical_name"],
                 slug=defn["slug"],
                 category=defn["category"],
@@ -609,9 +614,14 @@ async def seed_exercises(session: AsyncSession) -> int:
             session.add(exercise)
             await session.flush()
             created_count += 1
+            existing_aliases: set[str] = set()
+        else:
+            alias_res = await session.execute(
+                select(ExerciseAlias.alias).where(ExerciseAlias.exercise_id == exercise.id)
+            )
+            existing_aliases = {a.lower() for a in alias_res.scalars().all()}
 
-        # Seed aliases
-        existing_aliases = {a.alias.lower() for a in exercise.aliases}
+        # Seed aliases without triggering async lazy loads
         for alias_str in defn["aliases"]:
             alias_lower = alias_str.strip().lower()
             if alias_lower not in existing_aliases:
@@ -622,15 +632,15 @@ async def seed_exercises(session: AsyncSession) -> int:
                 )
                 session.add(alias_obj)
                 existing_aliases.add(alias_lower)
-                alias_count += 1
 
-    await session.commit()
+    await session.flush()
     return created_count
 
 
 async def main():
     async with async_session_factory() as session:
         count = await seed_exercises(session)
+        await session.commit()
         print(f"Seeded {count} exercises successfully.")
 
 

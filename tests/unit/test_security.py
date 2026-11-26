@@ -1,7 +1,7 @@
 """Unit tests for token encryption and decryption utilities."""
 
 import pytest
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from src.core.security import decrypt_token, encrypt_token
 
 
@@ -28,5 +28,5 @@ def test_invalid_key_fails_decryption():
     secret = "my_token"
 
     encrypted = encrypt_token(secret, key=key1)
-    with pytest.raises(Exception):
+    with pytest.raises(InvalidToken):
         decrypt_token(encrypted, key=key2)

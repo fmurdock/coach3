@@ -1,0 +1,490 @@
+openapi: 3.1.0
+info:
+  title: Coach3 Remediation & Hardening API Contract
+  version: 2.0.0
+  description: >
+    New and hardened HTTP contracts for 007-remediation covering single-user
+    passphrase authentication, system health & sync diagnostics, athlete timezone
+    preferences, lossless ZIP export, everyday workout/set/plan CRUD, and
+    hardened integration/gym/coaching endpoints.
+
+paths:
+  /health:
+    get:
+      summary: Dependency-aware health check (FR-002)
+      tags: [Health]
+      security: []
+      responses:
+        "200":
+          description: Application and database are healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: Database unreachable or degraded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/v1/auth/status:
+    get:
+      summary: Check current authentication state (FR-005)
+      tags: [Authentication]
+      security: []
+      responses:
+        "200":
+          description: Authentication state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthStatusResponse"
+
+  /api/v1/auth/login:
+    post:
+      summary: Sign in with single-user passphrase (FR-005, FR-041)
+      tags: [Authentication]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [passphrase]
+              properties:
+                passphrase:
+                  type: string
+                  minLength: 1
+      responses:
+        "200":
+          description: Authenticated; sets HttpOnly SameSite=Lax coach3_session cookie
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthStatusResponse"
+        "401":
+          description: Invalid passphrase
+        "429":
+          description: Too many failed sign-in attempts (includes Retry-After header)
+
+  /api/v1/auth/logout:
+    post:
+      summary: Sign out and clear session cookie (FR-005)
+      tags: [Authentication]
+      responses:
+        "200":
+          description: Signed out; session cookie cleared
+
+  /api/v1/system/diagnostics:
+    get:
+      summary: System health, encryption readability, scheduler state & recent sync logs (FR-039, FR-044)
+      tags: [Diagnostics]
+      responses:
+        "200":
+          description: Diagnostics snapshot for Settings panel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemDiagnosticsResponse"
+
+  /api/v1/export:
+    get:
+      summary: Download full lossless ZIP export (backup.json + workouts.csv + strength_sets.csv) (FR-032)
+      tags: [Export]
+      parameters:
+        - name: include_demo
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: ZIP archive containing backup.json, workouts.csv, and strength_sets.csv
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: attachment; filename="coach3-export-20261124-210000.zip"
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+
+  /api/v1/profile/preferences:
+    get:
+      summary: Get athlete display timezone and profile preferences (FR-038)
+      tags: [Profile]
+      responses:
+        "200":
+          description: Athlete preferences
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AthletePreferences"
+    put:
+      summary: Update athlete IANA display timezone (FR-038)
+      tags: [Profile]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AthletePreferences"
+      responses:
+        "200":
+          description: Updated athlete preferences
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AthletePreferences"
+        "422":
+          description: Invalid IANA timezone string
+
+  /api/v1/config/integrations/{provider}:
+    post:
+      summary: Upsert OAuth credentials without overwriting Client ID with mask bullets (FR-018)
+      tags: [Configuration]
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [polar, concept2]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [client_secret]
+              properties:
+                client_id:
+                  type: string
+                  nullable: true
+                  description: Required on initial setup; optional when rotating secret on existing config. Rejects masked bullet strings.
+                client_secret:
+                  type: string
+                  minLength: 1
+                redirect_uri:
+                  type: string
+                  format: uri
+                  nullable: true
+      responses:
+        "200":
+          description: Updated provider config summary (includes decryption_error flag)
+        "400":
+          description: Missing client_id on initial setup or invalid masked input
+
+  /api/v1/workouts:
+    get:
+      summary: Paginated, window-filtered, low-memory workout list (FR-025, FR-033, FR-038)
+      tags: [Workouts]
+      parameters:
+        - name: discipline
+          in: query
+          schema:
+            type: string
+            enum: [outdoor_run, indoor_row, erg_bike, strength]
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [7d, 30d, 90d, ytd, all]
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: List of workouts scoped to active user, active status, and date window
+          headers:
+            X-Total-Count:
+              schema:
+                type: integer
+
+  /api/v1/workouts/{workout_id}:
+    patch:
+      summary: Edit workout title and/or notes (FR-033)
+      tags: [Workouts]
+      parameters:
+        - name: workout_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                user_notes:
+                  type: string
+                  nullable: true
+                  maxLength: 10000
+      responses:
+        "200":
+          description: Updated workout detail summary
+        "404":
+          description: Workout not found
+
+  /api/v1/gym/sessions/{session_id}/sets:
+    get:
+      summary: List logged sets for a strength session (supports page reload restoration) (FR-023)
+      tags: [Gym Mode]
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ordered list of StrengthSetResponse for the session
+    post:
+      summary: Atomically commit strength sets with exact submission idempotency & audit diff (FR-020, FR-021, FR-023)
+      tags: [Gym Mode]
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idempotency_key, sets]
+              properties:
+                idempotency_key:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                raw_transcript:
+                  type: string
+                  nullable: true
+                confidence_score:
+                  type: number
+                  nullable: true
+                was_edited:
+                  type: boolean
+                  default: false
+                original_parsed_sets:
+                  type: array
+                  nullable: true
+                  items:
+                    type: object
+                sets:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+      responses:
+        "201":
+          description: Committed sets (or exact idempotent replay)
+
+  /api/v1/gym/sets/{set_id}:
+    delete:
+      summary: Delete/undo a mistakenly logged strength set (FR-033)
+      tags: [Gym Mode]
+      parameters:
+        - name: set_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Set deleted
+        "404":
+          description: Set not found
+
+  /api/v1/coaching/analyze:
+    post:
+      summary: Run retrospective workout critique with concurrency guard (FR-009, FR-043)
+      tags: [Adaptive AI Coaching]
+      responses:
+        "200":
+          description: Saved coaching critique
+        "409":
+          description: An AI coaching request is already in flight for this athlete
+        "502":
+          description: Upstream AI provider failure (sanitized error detail)
+
+  /api/v1/coaching/plan:
+    post:
+      summary: Generate periodized forward plan with concurrency guard & schedule invariant validation (FR-009, FR-043)
+      tags: [Adaptive AI Coaching]
+      responses:
+        "200":
+          description: Saved training schedule plan
+        "409":
+          description: An AI coaching request is already in flight for this athlete
+        "422":
+          description: Generated plan failed safety/structural invariants
+        "502":
+          description: Upstream AI provider failure (sanitized error detail)
+
+  /api/v1/coaching/scheduled-workouts/{scheduled_workout_id}:
+    patch:
+      summary: Toggle completion status on a planned workout (FR-033)
+      tags: [Adaptive AI Coaching]
+      parameters:
+        - name: scheduled_workout_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [is_completed]
+              properties:
+                is_completed:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated ScheduledWorkoutItem
+        "404":
+          description: Scheduled workout not found
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service, environment, database]
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        service:
+          type: string
+          example: coach3
+        environment:
+          type: string
+        database:
+          type: string
+          enum: [connected, unreachable]
+
+    AuthStatusResponse:
+      type: object
+      required: [authenticated, auth_required, localhost_bypass_active]
+      properties:
+        authenticated:
+          type: boolean
+        auth_required:
+          type: boolean
+        localhost_bypass_active:
+          type: boolean
+
+    AthletePreferences:
+      type: object
+      required: [timezone]
+      properties:
+        timezone:
+          type: string
+          example: America/Los_Angeles
+
+    SystemDiagnosticsResponse:
+      type: object
+      required: [database_healthy, scheduler_running, has_recent_sync_failures, providers, recent_sync_logs]
+      properties:
+        database_healthy:
+          type: boolean
+        schema_revision:
+          type: string
+          nullable: true
+        scheduler_running:
+          type: boolean
+        next_sync_at:
+          type: string
+          format: date-time
+          nullable: true
+        has_recent_sync_failures:
+          type: boolean
+        providers:
+          type: array
+          items:
+            type: object
+            properties:
+              provider:
+                type: string
+              is_configured:
+                type: boolean
+              is_connected:
+                type: boolean
+              decryption_error:
+                type: boolean
+              last_sync_at:
+                type: string
+                format: date-time
+                nullable: true
+              last_sync_status:
+                type: string
+                nullable: true
+        recent_sync_logs:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              provider:
+                type: string
+              trigger_type:
+                type: string
+              status:
+                type: string
+              items_imported:
+                type: integer
+              items_updated:
+                type: integer
+              error_message:
+                type: string
+                nullable: true
+              started_at:
+                type: string
+                format: date-time
+              completed_at:
+                type: string
+                format: date-time
+                nullable: true

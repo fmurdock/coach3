@@ -1,10 +1,27 @@
 """Test configuration and async fixtures."""
 
+import os
 import uuid
+from cryptography.fernet import Fernet
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from src.models import Base, User, UserHeartRateProfile
+# Ensure tests always run in isolated test environment with an ephemeral encryption key
+os.environ.setdefault("ENVIRONMENT", "test")
+os.environ.setdefault("ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
+os.environ.setdefault("AUTH_DISABLED_LOCALHOST", "true")
+
+from src.models import Base, User, UserHeartRateProfile  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_fastapi_overrides():
+    """Guarantee FastAPI dependency overrides never leak between tests."""
+    from src.main import app
+
+    yield
+    app.dependency_overrides.clear()
 
 
 @pytest_asyncio.fixture

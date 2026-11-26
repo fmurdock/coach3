@@ -1,6 +1,7 @@
 """Concept2 Logbook API adapter for indoor rower and erg bike workouts."""
 
 from datetime import datetime, timedelta, timezone
+import logging
 import math
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -14,16 +15,17 @@ from src.adapters.base import (
     SyncBatchResult,
 )
 from src.core.config import settings
+from src.core.http_client import request_with_retry
+from src.core.logging import redact_secrets
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_c2_time_sec(raw_val: Any) -> float:
-    """Convert Concept2 duration values (tenths of a second when > 1000) to seconds."""
-    if not raw_val:
+    """Convert Concept2 duration values (always tenths of a second in the Logbook API) to seconds."""
+    if raw_val is None or raw_val == "":
         return 0.0
-    val = float(raw_val)
-    if (isinstance(raw_val, int) and raw_val > 1000) or val > 10000:
-        return val / 10.0
-    return val
+    return round(float(raw_val) / 10.0, 2)
 
 
 def _truncate_tenth(val: float) -> float:
@@ -35,13 +37,7 @@ def parse_concept2_strokes(
     raw_data: dict[str, Any],
     strokes_data: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Align Concept2 stroke telemetry with workout intervals and cumulative elapsed time.
-
-    Concept2's /strokes stream resets relative timestamp `t` (in tenths of a second) to 0 at
-    the start of each interval. This helper detects each reset, tracks `interval_index` (1-based),
-    computes `set_elapsed_sec` (0:00..interval duration) and cumulative `elapsed_sec` (including
-    between-interval rest durations), and omits flywheel dead-start `p == 0` pace outliers.
-    """
+    """Align Concept2 stroke telemetry with workout intervals and cumulative elapsed time."""
     strokes = strokes_data if strokes_data is not None else (raw_data.get("strokes") or [])
     if not strokes:
         return []
@@ -95,7 +91,7 @@ class Concept2Adapter(BaseIngestionAdapter):
     """Client for Concept2 Logbook API."""
 
     AUTH_URL = "https://log.concept2.com/oauth/authorize"
-    TOKEN_URL = "https://log.concept2.com/oauth/access_token"
+    TOKEN_URL = "https://log.concept2.com/oauth/access_token"  # noqa: S105
     BASE_URL = "https://log.concept2.com/api"
 
     def __init__(
@@ -127,7 +123,7 @@ class Concept2Adapter(BaseIngestionAdapter):
             "redirect_uri": self.redirect_uri,
         }
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(self.TOKEN_URL, data=data)
+            resp = await request_with_retry(client, "POST", self.TOKEN_URL, data=data)
             resp.raise_for_status()
             return resp.json()
 
@@ -139,7 +135,7 @@ class Concept2Adapter(BaseIngestionAdapter):
             "refresh_token": refresh_token,
         }
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(self.TOKEN_URL, data=data)
+            resp = await request_with_retry(client, "POST", self.TOKEN_URL, data=data)
             resp.raise_for_status()
             return resp.json()
 
@@ -151,7 +147,13 @@ class Concept2Adapter(BaseIngestionAdapter):
         }
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(f"{self.BASE_URL}/users/me", headers=headers)
+                resp = await request_with_retry(
+                    client,
+                    "GET",
+                    f"{self.BASE_URL}/users/me",
+                    headers=headers,
+                    max_attempts=2,
+                )
                 if resp.status_code == 200:
                     data = resp.json().get("data", {})
                     username = data.get("username") or data.get("first_name", "Concept2 User")
@@ -180,7 +182,7 @@ class Concept2Adapter(BaseIngestionAdapter):
                 "is_connected": False,
                 "status": "error",
                 "athlete_name": None,
-                "error": str(exc),
+                "error": redact_secrets(str(exc)),
             }
 
     def normalize_concept2_workout(
@@ -189,9 +191,12 @@ class Concept2Adapter(BaseIngestionAdapter):
         strokes_data: list[dict[str, Any]] | None = None,
     ) -> NormalizedWorkout:
         """Map raw Concept2 Logbook workout JSON to canonical NormalizedWorkout entity."""
-        ext_id = str(raw_data.get("id"))
-        raw_type = str(raw_data.get("type", "rower")).lower()
+        raw_id = raw_data.get("id")
+        if raw_id is None or str(raw_id).strip() == "":
+            raise ValueError("Concept2 workout payload missing required 'id' field.")
+        ext_id = str(raw_id).strip()
 
+        raw_type = str(raw_data.get("type", "rower")).lower()
         if "bike" in raw_type:
             discipline = "erg_bike"
             title = "Concept2 BikeErg Session"
@@ -211,7 +216,6 @@ class Concept2Adapter(BaseIngestionAdapter):
                 start_time_utc = datetime.now(timezone.utc)
         elif date_str:
             try:
-                # Format: "YYYY-MM-DD HH:MM:SS" or ISO (local time in `timezone_str`)
                 dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
                 if dt.tzinfo is None:
                     if timezone_str and timezone_str != "UTC":
@@ -227,25 +231,34 @@ class Concept2Adapter(BaseIngestionAdapter):
         else:
             start_time_utc = datetime.now(timezone.utc)
 
-        # Concept2 time is in tenths of a second (e.g. 12000 = 1200.0 sec, 17767 = 1776.7 sec)
-        raw_time = raw_data.get("time", 0)
-        total_duration_sec = _parse_c2_time_sec(raw_time)
-        if total_duration_sec > 100000:
-            total_duration_sec = float(raw_time) / 10.0
-
+        # Concept2 time is always in tenths of a second
+        total_duration_sec = _parse_c2_time_sec(raw_data.get("time", 0))
         distance_m = float(raw_data.get("distance", 0.0))
 
-        # Pace in C2 is tenths of a second per 500m (rower) or per 1000m (BikeErg)
+        # Concept2 pace is tenths of a second per 500m (rower) OR per 1000m (BikeErg)
         raw_pace = raw_data.get("pace")
-        avg_split_500m = float(raw_pace) / 10.0 if raw_pace else None
-        if avg_split_500m is None and distance_m > 0 and total_duration_sec > 0:
-            avg_split_500m = _truncate_tenth((total_duration_sec / distance_m) * 500.0)
-
-        avg_pace_km = (
-            _truncate_tenth((total_duration_sec / distance_m) * 1000.0)
-            if discipline == "erg_bike" and distance_m > 0 and total_duration_sec > 0
-            else None
-        )
+        if discipline == "erg_bike":
+            avg_pace_km = (
+                round(float(raw_pace) / 10.0, 1)
+                if raw_pace
+                else (
+                    _truncate_tenth((total_duration_sec / distance_m) * 1000.0)
+                    if distance_m > 0 and total_duration_sec > 0
+                    else None
+                )
+            )
+            avg_split_500m = None
+        else:
+            avg_split_500m = (
+                round(float(raw_pace) / 10.0, 1)
+                if raw_pace
+                else (
+                    _truncate_tenth((total_duration_sec / distance_m) * 500.0)
+                    if distance_m > 0 and total_duration_sec > 0
+                    else None
+                )
+            )
+            avg_pace_km = None
 
         stroke_rate = raw_data.get("stroke_rate")
         stroke_count = raw_data.get("stroke_count")
@@ -261,7 +274,6 @@ class Concept2Adapter(BaseIngestionAdapter):
             avg_hr = int(hr_info) if hr_info else None
             max_hr = None
 
-        # Parse intervals vs steady-state splits
         splits: list[NormalizedSplit] = []
         raw_intervals = raw_data.get("intervals") or raw_data.get("workout", {}).get("intervals")
         is_interval_workout = bool(raw_intervals)
@@ -275,12 +287,28 @@ class Concept2Adapter(BaseIngestionAdapter):
             inv_duration_sec = _parse_c2_time_sec(interval.get("time", 0))
 
             inv_pace_raw = interval.get("pace")
-            if inv_pace_raw:
-                inv_split_500m = float(inv_pace_raw) / 10.0 if float(inv_pace_raw) > 100 else float(inv_pace_raw)
-            elif inv_dist > 0 and inv_duration_sec > 0:
-                inv_split_500m = _truncate_tenth((inv_duration_sec / inv_dist) * 500.0)
+            if discipline == "erg_bike":
+                if inv_pace_raw:
+                    inv_pace_km = round(float(inv_pace_raw) / 10.0, 1)
+                    inv_split_500m = round(inv_pace_km / 2.0, 1)
+                elif inv_dist > 0 and inv_duration_sec > 0:
+                    inv_pace_km = _truncate_tenth((inv_duration_sec / inv_dist) * 1000.0)
+                    inv_split_500m = round(inv_pace_km / 2.0, 1)
+                else:
+                    inv_pace_km = None
+                    inv_split_500m = None
             else:
-                inv_split_500m = None
+                if inv_pace_raw:
+                    inv_split_500m = round(float(inv_pace_raw) / 10.0, 1)
+                elif inv_dist > 0 and inv_duration_sec > 0:
+                    inv_split_500m = _truncate_tenth((inv_duration_sec / inv_dist) * 500.0)
+                else:
+                    inv_split_500m = None
+                inv_pace_km = (
+                    _truncate_tenth((inv_duration_sec / inv_dist) * 1000.0)
+                    if inv_dist > 0 and inv_duration_sec > 0
+                    else ((inv_split_500m * 2.0) if inv_split_500m else None)
+                )
 
             inv_wm = interval.get("wattminutes_total")
             inv_watts = interval.get("watts")
@@ -311,15 +339,11 @@ class Concept2Adapter(BaseIngestionAdapter):
                     avg_cadence_spm=float(interval.get("stroke_rate")) if interval.get("stroke_rate") is not None else None,
                     avg_heart_rate=inv_avg_hr,
                     avg_split_sec_per_500m=inv_split_500m,
-                    avg_pace_sec_per_km=(
-                        _truncate_tenth((inv_duration_sec / inv_dist) * 1000.0)
-                        if inv_dist > 0 and inv_duration_sec > 0
-                        else ((inv_split_500m * 2.0) if inv_split_500m else None)
-                    ),
+                    avg_pace_sec_per_km=inv_pace_km,
                 )
             )
 
-            # Append rest split ONLY between work intervals (never a trailing rest after the final interval)
+            # Append rest split ONLY between work intervals (never a trailing rest after final interval)
             if is_interval_workout and i < len(raw_segments) - 1:
                 rest_sec = _parse_c2_time_sec(interval.get("rest_time", 0))
                 if rest_sec > 0:
@@ -338,7 +362,6 @@ class Concept2Adapter(BaseIngestionAdapter):
                         )
                     )
 
-        # Align stroke telemetry across intervals and compute cumulative workout elapsed_sec
         hr_samples: list[NormalizedHeartRateSample] = []
         summary_to_save = dict(raw_data)
         effective_strokes = strokes_data if strokes_data is not None else raw_data.get("strokes")
@@ -358,7 +381,6 @@ class Concept2Adapter(BaseIngestionAdapter):
                         )
                     )
         elif splits:
-            # Generate continuous HR samples across splits if split HR is available
             cur_sec = 0.0
             for sp in splits:
                 if sp.avg_heart_rate and sp.duration_sec and sp.duration_sec > 0:
@@ -375,7 +397,6 @@ class Concept2Adapter(BaseIngestionAdapter):
                         )
                 cur_sec += (sp.duration_sec or 0.0)
         elif avg_hr and total_duration_sec > 0:
-            # Baseline sampling from session average
             step = 15.0
             n_steps = max(2, int(total_duration_sec / step))
             for i in range(n_steps):
@@ -425,7 +446,7 @@ class Concept2Adapter(BaseIngestionAdapter):
         cursor: dict[str, Any] | None = None,
         since: datetime | None = None,
     ) -> SyncBatchResult:
-        """Fetch workouts from Concept2 Logbook API with pagination support and stroke telemetry."""
+        """Fetch workouts from Concept2 Logbook API, propagating HTTP errors for honest retry/refresh."""
         page = cursor.get("page", 1) if cursor else 1
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -438,32 +459,31 @@ class Concept2Adapter(BaseIngestionAdapter):
         url = f"{self.BASE_URL}/users/me/results"
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                resp = await client.get(url, headers=headers, params=params)
-                if resp.status_code == 404:
-                    return SyncBatchResult(workouts=[], next_cursor=None, has_more=False)
-                resp.raise_for_status()
-                payload = resp.json()
-            except httpx.HTTPError:
-                return SyncBatchResult(workouts=[], next_cursor=cursor, has_more=False)
+            resp = await request_with_retry(client, "GET", url, headers=headers, params=params)
+            if resp.status_code == 404:
+                return SyncBatchResult(workouts=[], next_cursor=None, has_more=False)
+            resp.raise_for_status()
+            payload = resp.json()
 
             results_data = payload.get("data", [])
             normalized_workouts: list[NormalizedWorkout] = []
             for item in results_data:
                 strokes_data = None
-                # If workout has stroke data recorded, fetch stroke telemetry
                 if item.get("stroke_data") is True:
                     try:
                         res_id = item.get("id")
                         s_url = f"{self.BASE_URL}/users/me/results/{res_id}/strokes"
-                        s_resp = await client.get(s_url, headers=headers)
+                        s_resp = await request_with_retry(client, "GET", s_url, headers=headers, max_attempts=2)
                         if s_resp.status_code == 200:
                             s_json = s_resp.json()
                             strokes_data = s_json.get("data") if isinstance(s_json, dict) else s_json
                     except Exception:
                         strokes_data = None
 
-                normalized_workouts.append(self.normalize_concept2_workout(item, strokes_data=strokes_data))
+                try:
+                    normalized_workouts.append(self.normalize_concept2_workout(item, strokes_data=strokes_data))
+                except ValueError as val_exc:
+                    logger.warning("Skipping malformed Concept2 workout: %s", val_exc)
 
             pagination = payload.get("pagination", {})
             has_next = bool(pagination.get("next"))

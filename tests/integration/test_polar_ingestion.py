@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.polar import PolarAdapter
-from src.models import GPSRoutePoint, HeartRateSample, User, WorkoutSession
+from src.models import GPSRoutePoint, HeartRateSample, WorkoutSession
 from src.services.ingestion import ingest_workout
 
 

@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-coach_secret}
       POSTGRES_DB: ${POSTGRES_DB:-coach3_dev}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -27,12 +27,25 @@ services:
       db:
         condition: service_healthy
     environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      PORT: ${PORT:-8000}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-coach}:${POSTGRES_PASSWORD:-coach_secret}@db:5432/${POSTGRES_DB:-coach3_dev}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set}
+      COACH3_PASSPHRASE: ${COACH3_PASSPHRASE:-}
+      COACH3_PASSPHRASE_HASH: ${COACH3_PASSPHRASE_HASH:-}
+      AUTH_DISABLED_LOCALHOST: ${AUTH_DISABLED_LOCALHOST:-false}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8000}
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+      ALLOWED_LLM_HOSTS: ${ALLOWED_LLM_HOSTS:-}
+      SCRUB_TERMS: ${SCRUB_TERMS:-}
       POLAR_CLIENT_ID: ${POLAR_CLIENT_ID:-}
       POLAR_CLIENT_SECRET: ${POLAR_CLIENT_SECRET:-}
+      POLAR_REDIRECT_URI: ${POLAR_REDIRECT_URI:-http://localhost:8000/api/v1/integrations/polar/callback}
       CONCEPT2_CLIENT_ID: ${CONCEPT2_CLIENT_ID:-}
       CONCEPT2_CLIENT_SECRET: ${CONCEPT2_CLIENT_SECRET:-}
+      CONCEPT2_REDIRECT_URI: ${CONCEPT2_REDIRECT_URI:-http://localhost:8000/api/v1/integrations/concept2/callback}
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-60}
+      SYNC_PAGE_LIMIT: ${SYNC_PAGE_LIMIT:-50}
     ports:
       - "${PORT:-8000}:8000"
 

@@ -39,7 +39,7 @@ class NormalizedSplit:
 class NormalizedWorkout:
     provider: str
     external_id: str
-    discipline: str  # 'outdoor_run', 'indoor_row', 'erg_bike'
+    discipline: str  # 'outdoor_run', 'indoor_row', 'erg_bike', 'strength'
     title: str
     start_time_utc: datetime
     local_timezone: str
@@ -68,6 +68,7 @@ class SyncBatchResult:
     workouts: list[NormalizedWorkout]
     next_cursor: dict[str, Any] | None
     has_more: bool
+    pending_commit_token: dict[str, Any] | None = None
 
 
 class BaseIngestionAdapter(ABC):
@@ -97,3 +98,14 @@ class BaseIngestionAdapter(ABC):
     ) -> SyncBatchResult:
         """Fetch a paginated batch of normalized workouts and telemetry."""
         pass
+
+    async def commit_batch(
+        self,
+        access_token: str,
+        commit_token: dict[str, Any],
+    ) -> None:
+        """Acknowledge/commit a remote transaction ONLY after local DB persistence succeeds.
+
+        Default implementation is a no-op for stateless paginated APIs (e.g. Concept2).
+        """
+        return None
