@@ -226,6 +226,7 @@
   function toggleAiFields(keepModel) {
     const type = document.getElementById('aiProviderType').value;
     const endpointGroup = document.getElementById('aiEndpointGroup');
+    const scannedGroup = document.getElementById('aiScannedModelsGroup');
     const keyGroup = document.getElementById('aiApiKeyGroup');
     const modelInput = document.getElementById('aiModelName');
 
@@ -235,10 +236,74 @@
       if (!keepModel) modelInput.value = 'qwen2.5-14b-instruct';
     } else {
       endpointGroup.style.display = 'none';
+      if (scannedGroup) scannedGroup.style.display = 'none';
       keyGroup.style.display = 'flex';
       if (!keepModel) modelInput.value = 'gemini-2.5-flash';
     }
   }
+
+  async function scanLocalModels() {
+    const endpointUrl = document.getElementById('aiEndpointUrl').value.trim();
+    const scanBtn = document.getElementById('btnScanLocalModels');
+    const scannedGroup = document.getElementById('aiScannedModelsGroup');
+    const selectEl = document.getElementById('aiScannedModels');
+    const modelInput = document.getElementById('aiModelName');
+
+    if (!endpointUrl) {
+      showToast('Enter a llama.cpp endpoint URL first.', 'error');
+      return;
+    }
+
+    scanBtn.disabled = true;
+    scanBtn.textContent = 'Scanning…';
+    try {
+      const res = await authFetch('/api/v1/coaching/providers/local/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint_url: endpointUrl }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || `Scan failed (HTTP ${res.status})`);
+      }
+
+      const models = Array.isArray(data.models) ? data.models : [];
+      selectEl.innerHTML = '';
+      if (models.length === 0) {
+        scannedGroup.style.display = 'none';
+        showToast('Connected, but no models were returned by /v1/models.', 'warning');
+        return;
+      }
+
+      const currentModel = modelInput.value.trim();
+      models.forEach((m) => {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m;
+        if (m === currentModel) opt.selected = true;
+        selectEl.appendChild(opt);
+      });
+
+      scannedGroup.style.display = 'flex';
+      if (!models.includes(currentModel)) {
+        selectEl.value = models[0];
+        modelInput.value = models[0];
+      }
+      showToast(`Found ${models.length} installed model(s).`, 'success');
+    } catch (err) {
+      showToast(err.message || 'Could not scan local models.', 'error');
+    } finally {
+      scanBtn.disabled = false;
+      scanBtn.textContent = 'Scan Models';
+    }
+  }
+
+  document.getElementById('btnScanLocalModels').addEventListener('click', scanLocalModels);
+  document.getElementById('aiScannedModels').addEventListener('change', (e) => {
+    if (e.target.value) {
+      document.getElementById('aiModelName').value = e.target.value;
+    }
+  });
 
   document.getElementById('aiProviderType').addEventListener('change', () => toggleAiFields(false));
 

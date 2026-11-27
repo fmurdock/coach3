@@ -1,19 +1,20 @@
-/* Coach3 Unified Dark Theme & Shared Accessible UI Shell */
+/* Coach3 Calm, Professional Slate Theme & Shared Accessible UI Shell */
 :root {
-  --bg: #090d16;
-  --card: #131a29;
-  --card-border: #1f293d;
-  --text: #f1f5f9;
+  --bg: #0f172a;
+  --card: #1e293b;
+  --card-subtle: #162032;
+  --card-border: #334155;
+  --text: #f8fafc;
   --text-muted: #94a3b8;
-  --accent: #38bdf8;
-  --accent-hover: #0284c7;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
   --success: #10b981;
   --success-hover: #059669;
   --warning: #f59e0b;
   --danger: #ef4444;
-  --vo2max: #f43f5e;
-  --purple: #a855f7;
-  --badge-bg: #1e293b;
+  --vo2max: #e11d48;
+  --purple: #8b5cf6;
+  --badge-bg: #273549;
 }
 
 * {
@@ -32,8 +33,10 @@ body {
   min-height: 100vh;
   max-width: 100vw;
   overflow-x: hidden;
-  padding: 16px;
-  padding-bottom: 50px;
+  padding: 20px;
+  padding-bottom: 56px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* Shared Top Navigation Bar */
@@ -43,17 +46,17 @@ nav.app-navbar {
   align-items: center;
   background: var(--card);
   border: 1px solid var(--card-border);
-  border-radius: 12px;
-  padding: 10px 16px;
-  margin-bottom: 20px;
+  border-radius: 10px;
+  padding: 12px 18px;
+  margin-bottom: 24px;
   flex-wrap: wrap;
   gap: 12px;
 }
 
 .nav-brand {
-  font-size: 19px;
-  font-weight: 800;
-  letter-spacing: -0.4px;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -67,51 +70,51 @@ nav.app-navbar {
 
 .nav-links {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
   align-items: center;
 }
 
 .nav-link,
 .nav-btn {
-  background: var(--badge-bg);
-  border: 1px solid var(--card-border);
-  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
   text-decoration: none;
   font-size: 13px;
   font-weight: 600;
-  padding: 6px 13px;
-  border-radius: 999px;
+  padding: 6px 12px;
+  border-radius: 8px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
 }
 
 .nav-link:hover,
 .nav-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--badge-bg);
+  color: var(--text);
 }
 
 .nav-link.active,
 .nav-btn.active {
-  background: rgba(56, 189, 248, 0.16);
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--badge-bg);
+  border-color: var(--card-border);
+  color: var(--text);
 }
 
 .nav-signout {
-  background: rgba(239, 68, 68, 0.12);
-  border: 1px solid rgba(239, 68, 68, 0.35);
-  color: #fca5a5;
+  background: transparent;
+  border: 1px solid var(--card-border);
+  color: var(--text-muted);
 }
 
 .nav-signout:hover {
-  background: var(--danger);
-  border-color: var(--danger);
-  color: #fff;
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
 }
 
 /* Shared Badges & Buttons */

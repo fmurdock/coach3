@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db
 from src.main import app
-from src.models import StrengthSet, VoiceTranscriptionLog
+from src.models import StrengthSet, VoiceTranscriptionLog, WorkoutSession
 
 
 @pytest.mark.asyncio
@@ -52,9 +52,11 @@ async def test_get_active_strength_session(db_session: AsyncSession):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/api/v1/gym/sessions/active")
         assert resp.status_code == 200
-        data = resp.json()
-        assert "id" in data
-        assert data["discipline"] == "strength"
+        assert resp.json() is None
+
+    # Must NOT create a blank 0-set WorkoutSession row on GET
+    sessions = (await db_session.execute(select(WorkoutSession))).scalars().all()
+    assert len(sessions) == 0
 
 
 @pytest.mark.asyncio
@@ -62,12 +64,7 @@ async def test_commit_strength_sets_and_idempotency(db_session: AsyncSession):
     app.dependency_overrides[get_db] = lambda: db_session
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # 1. Get or create active session
-        sess_resp = await client.get("/api/v1/gym/sessions/active")
-        assert sess_resp.status_code == 200
-        session_id = sess_resp.json()["id"]
-
-        # 2. Commit 3 sets of bench press
+        # 1. Commit 3 sets of bench press lazily via POST /api/v1/gym/sets
         idem_key = str(uuid.uuid4())
         payload = {
             "idempotency_key": idem_key,
@@ -87,10 +84,21 @@ async def test_commit_strength_sets_and_idempotency(db_session: AsyncSession):
             ],
         }
 
-        commit_resp = await client.post(
-            f"/api/v1/gym/sessions/{session_id}/sets",
-            json=payload,
-        )
+        commit_resp = await client.post("/api/v1/gym/sets", json=payload)
+        assert commit_resp.status_code == 201
+        saved = commit_resp.json()
+        assert len(saved) == 3
+        session_id = saved[0]["workout_session_id"]
+
+        # GET /sessions/active now returns the lazily created session
+        sess_resp = await client.get("/api/v1/gym/sessions/active")
+        assert sess_resp.status_code == 200
+        assert sess_resp.json()["id"] == session_id
+
+        # 2. Replay exact same idempotency_key on explicit session endpoint -> idempotent return
+        replay_resp = await client.post(f"/api/v1/gym/sessions/{session_id}/sets", json=payload)
+        assert replay_resp.status_code == 201
+        assert [s["id"] for s in replay_resp.json()] == [s["id"] for s in saved]
         assert commit_resp.status_code == 201
         created_sets = commit_resp.json()
         assert len(created_sets) == 3
@@ -132,9 +140,6 @@ async def test_commit_calisthenic_sets_with_added_load(db_session: AsyncSession)
     app.dependency_overrides[get_db] = lambda: db_session
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        sess_resp = await client.get("/api/v1/gym/sessions/active")
-        session_id = sess_resp.json()["id"]
-
         parse_resp = await client.post(
             "/api/v1/gym/parse",
             json={"transcript": "3 sets of 12 pullups with an extra 30 pounds added"},
@@ -143,7 +148,7 @@ async def test_commit_calisthenic_sets_with_added_load(db_session: AsyncSession)
         stage_data = parse_resp.json()
 
         commit_resp = await client.post(
-            f"/api/v1/gym/sessions/{session_id}/sets",
+            "/api/v1/gym/sets",
             json={
                 "idempotency_key": str(uuid.uuid4()),
                 "raw_transcript": stage_data["raw_transcript"],
@@ -166,9 +171,6 @@ async def test_commit_sets_with_rpe_and_rest(db_session: AsyncSession):
     app.dependency_overrides[get_db] = lambda: db_session
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        sess_resp = await client.get("/api/v1/gym/sessions/active")
-        session_id = sess_resp.json()["id"]
-
         parse_resp = await client.post(
             "/api/v1/gym/parse",
             json={"transcript": "did a heavy single at 315 on deadlift, felt like RPE 8.5, rest 3 minutes"},
@@ -177,7 +179,7 @@ async def test_commit_sets_with_rpe_and_rest(db_session: AsyncSession):
         stage_data = parse_resp.json()
 
         commit_resp = await client.post(
-            f"/api/v1/gym/sessions/{session_id}/sets",
+            "/api/v1/gym/sets",
             json={
                 "idempotency_key": str(uuid.uuid4()),
                 "raw_transcript": stage_data["raw_transcript"],
@@ -201,9 +203,6 @@ async def test_commit_multi_exercise_batch_sets(db_session: AsyncSession):
     app.dependency_overrides[get_db] = lambda: db_session
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        sess_resp = await client.get("/api/v1/gym/sessions/active")
-        session_id = sess_resp.json()["id"]
-
         parse_resp = await client.post(
             "/api/v1/gym/parse",
             json={"transcript": "3 sets of 10 dumbbell lunges with 50s, followed by 3 sets of 15 calf raises"},
@@ -213,7 +212,7 @@ async def test_commit_multi_exercise_batch_sets(db_session: AsyncSession):
         assert len(stage_data["parsed_sets"]) == 2
 
         commit_resp = await client.post(
-            f"/api/v1/gym/sessions/{session_id}/sets",
+            "/api/v1/gym/sets",
             json={
                 "idempotency_key": str(uuid.uuid4()),
                 "raw_transcript": stage_data["raw_transcript"],
@@ -249,16 +248,12 @@ async def test_gym_commit_after_seed_sample_workouts(db_session: AsyncSession):
     app.dependency_overrides[get_db] = lambda: db_session
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        sess_resp = await client.get("/api/v1/gym/sessions/active")
-        assert sess_resp.status_code == 200
-        session_id = sess_resp.json()["id"]
-
         parse_resp = await client.post("/api/v1/gym/parse", json={"transcript": "bench press 225 lbs 3x5"})
         assert parse_resp.status_code == 200
         parsed = parse_resp.json()
 
         commit_resp = await client.post(
-            f"/api/v1/gym/sessions/{session_id}/sets",
+            "/api/v1/gym/sets",
             json={
                 "idempotency_key": str(uuid.uuid4()),
                 "raw_transcript": parsed["raw_transcript"],
@@ -277,12 +272,9 @@ async def test_gym_multi_1set_candidates_prefix_idempotency_voice_diff_and_list_
     app.dependency_overrides[get_db] = lambda: db_session
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        sess_resp = await client.get("/api/v1/gym/sessions/active")
-        session_id = sess_resp.json()["id"]
-
-        # 1. Two 1-set candidates in a single submission with key_10 first
+        # 1. Two 1-set candidates in a single submission with key_10 first (lazily creates session)
         r1 = await client.post(
-            f"/api/v1/gym/sessions/{session_id}/sets",
+            "/api/v1/gym/sets",
             json={
                 "idempotency_key": "key_10",
                 "sets": [
@@ -293,6 +285,7 @@ async def test_gym_multi_1set_candidates_prefix_idempotency_voice_diff_and_list_
         )
         assert r1.status_code == 201
         assert len(r1.json()) == 2
+        session_id = r1.json()[0]["workout_session_id"]
 
         # 2. Prefix-similar key_1 MUST NOT collide with key_10!
         r2 = await client.post(
@@ -333,6 +326,38 @@ async def test_gym_multi_1set_candidates_prefix_idempotency_voice_diff_and_list_
         all_sets = list_resp.json()
         assert len(all_sets) == 3
         assert [s["set_index"] for s in all_sets] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_delete_last_set_cleans_up_empty_gym_session(db_session: AsyncSession):
+    """Deleting the last remaining set of a coach3_gym session removes the empty WorkoutSession."""
+    app.dependency_overrides[get_db] = lambda: db_session
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        commit_resp = await client.post(
+            "/api/v1/gym/sets",
+            json={
+                "idempotency_key": str(uuid.uuid4()),
+                "sets": [{"exercise_name": "Barbell Bench Press", "sets": 1, "reps": 5, "weight": 185.0}],
+            },
+        )
+        assert commit_resp.status_code == 201
+        saved = commit_resp.json()
+        assert len(saved) == 1
+        set_id = saved[0]["id"]
+        session_id = saved[0]["workout_session_id"]
+
+        del_resp = await client.delete(f"/api/v1/gym/sets/{set_id}")
+        assert del_resp.status_code == 204
+
+        active_resp = await client.get("/api/v1/gym/sessions/active")
+        assert active_resp.status_code == 200
+        assert active_resp.json() is None
+
+    remaining_sess = (
+        await db_session.execute(select(WorkoutSession).where(WorkoutSession.id == uuid.UUID(session_id)))
+    ).scalar_one_or_none()
+    assert remaining_sess is None
 
 
 

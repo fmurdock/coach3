@@ -5,11 +5,44 @@
   const { escapeHtml, showToast, authFetch } = window.Coach3;
 
   const PAGE_SIZE = 25;
+  let activeDashboardTab = 'cardio';
   let currentWindow = '30d';
   let customStartDate = null;
   let customEndDate = null;
   let loadedWorkouts = [];
   let totalWorkoutsCount = 0;
+
+  function switchDashboardTab(tabName) {
+    activeDashboardTab = tabName === 'lifting' ? 'lifting' : 'cardio';
+    document.querySelectorAll('.modality-tab').forEach((btn) => {
+      const isSelected = btn.getAttribute('data-tab') === activeDashboardTab;
+      btn.classList.toggle('active', isSelected);
+      btn.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+    });
+    const cardioPanel = document.getElementById('tab-panel-cardio');
+    const liftingPanel = document.getElementById('tab-panel-lifting');
+    if (cardioPanel) cardioPanel.style.display = activeDashboardTab === 'cardio' ? 'block' : 'none';
+    if (liftingPanel) liftingPanel.style.display = activeDashboardTab === 'lifting' ? 'block' : 'none';
+
+    if (activeExpandedRowId) {
+      const prevDrawer = document.getElementById(`drawer-${activeExpandedRowId}`);
+      const prevRow = document.getElementById(`row-${activeExpandedRowId}`);
+      if (prevDrawer) prevDrawer.classList.remove('active');
+      if (prevRow) prevRow.classList.remove('expanded');
+      activeExpandedRowId = null;
+      if (activeDetailChart) {
+        activeDetailChart.destroy();
+        activeDetailChart = null;
+      }
+      destroyIntervalCharts();
+    }
+  }
+
+  document.querySelectorAll('.modality-tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      switchDashboardTab(btn.getAttribute('data-tab'));
+    });
+  });
 
   let zone2MacroChart = null;
   let vo2MacroChart = null;
@@ -140,7 +173,8 @@
   }
 
   function updateKPIs(data, macroData) {
-    document.getElementById('kpi-duration').textContent = `${data.total_duration_hours || 0}h`;
+    const cardioHours = data.cardio ? data.cardio.total_duration_hours || 0 : 0;
+    document.getElementById('kpi-duration').textContent = `${cardioHours}h`;
     document.getElementById('kpi-zone2').textContent = `${data.zone2_duration_hours || 0}h`;
     document.getElementById('kpi-zone2-sub').textContent = `${data.zone2_percentage || 0}% of cardio`;
 
@@ -157,7 +191,23 @@
     const bikeM = data.cardio ? data.cardio.erg_bike_meters || 0 : 0;
     document.getElementById('kpi-erg').textContent = `${(rowM + bikeM).toLocaleString()} m`;
 
-    document.getElementById('kpi-sets').textContent = (data.strength ? data.strength.effective_working_sets : 0) || 0;
+    const strengthData = data.strength || {};
+    document.getElementById('kpi-lifting-sessions').textContent = strengthData.total_sessions || 0;
+    document.getElementById('kpi-sets').textContent = strengthData.effective_working_sets || 0;
+    const totalVol = Math.round(strengthData.total_volume_lbs || 0);
+    document.getElementById('kpi-lifting-volume').textContent = `${totalVol.toLocaleString()} lbs`;
+
+    const muscleGroups = macroData && macroData.resistance ? macroData.resistance.muscle_groups || [] : [];
+    let best1Rm = 0;
+    let bestLift = 'Epley formula';
+    muscleGroups.forEach((mg) => {
+      if ((mg.estimated_1rm_lbs || 0) > best1Rm) {
+        best1Rm = mg.estimated_1rm_lbs;
+        bestLift = mg.top_exercise_name || mg.category || 'Epley formula';
+      }
+    });
+    document.getElementById('kpi-top-e1rm').textContent = best1Rm > 0 ? `${Math.round(best1Rm)} lbs` : '—';
+    document.getElementById('kpi-top-e1rm-sub').textContent = bestLift;
   }
 
   function buildSingleCardioGoalChart(canvasId, existingChart, trendLabels, barLabel, barColor, values, goalVal, goalLabel, goalColor) {
@@ -369,10 +419,11 @@
     });
   }
 
-  function renderPRShowcase(prs) {
-    const container = document.getElementById('pr-list-container');
+  function renderPRListInto(containerId, prs, emptyMsg) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
     if (!prs || prs.length === 0) {
-      container.innerHTML = '<div class="empty-state">No personal records logged yet. Complete workouts to set initial PRs!</div>';
+      container.innerHTML = `<div class="empty-state">${escapeHtml(emptyMsg)}</div>`;
       return;
     }
 
@@ -394,20 +445,50 @@
       .join('');
   }
 
+  function renderPRShowcase(prs) {
+    const allPrs = Array.isArray(prs) ? prs : [];
+    const liftingPrs = allPrs.filter((p) => p.discipline === 'strength' || p.category === 'strength');
+    const cardioPrs = allPrs.filter((p) => p.discipline !== 'strength' && p.category !== 'strength');
+    renderPRListInto('pr-list-cardio', cardioPrs, 'No cardio personal records in this window yet.');
+    renderPRListInto('pr-list-lifting', liftingPrs, 'No strength personal records in this window yet.');
+  }
+
   function renderWorkoutsTable(workouts) {
-    const tbody = document.getElementById('workouts-table-body');
-    const countSpan = document.getElementById('recent-workouts-count');
+    const all = Array.isArray(workouts) ? workouts : [];
+    const cardioWorkouts = all.filter((w) => w.discipline !== 'strength');
+    const liftingWorkouts = all.filter((w) => w.discipline === 'strength');
+
     const paginationBar = document.getElementById('pagination-bar');
+    if (paginationBar) {
+      paginationBar.style.display = all.length < totalWorkoutsCount ? 'flex' : 'none';
+    }
+
+    renderModalityWorkoutsTable(
+      cardioWorkouts,
+      'workouts-table-body-cardio',
+      'recent-workouts-count-cardio',
+      'No cardio workouts in this window. Try a wider window or sync in Settings!'
+    );
+    renderModalityWorkoutsTable(
+      liftingWorkouts,
+      'workouts-table-body-lifting',
+      'recent-workouts-count-lifting',
+      'No lifting sessions in this window. Log sets in Gym Mode!'
+    );
+  }
+
+  function renderModalityWorkoutsTable(workouts, tbodyId, countId, emptyText) {
+    const tbody = document.getElementById(tbodyId);
+    const countSpan = document.getElementById(countId);
+    if (!tbody || !countSpan) return;
 
     if (!workouts || workouts.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No workouts in this window. Try a wider window or sync in Settings!</td></tr>';
-      countSpan.textContent = '';
-      paginationBar.style.display = 'none';
+      tbody.innerHTML = `<tr><td colspan="7" class="empty-state">${escapeHtml(emptyText)}</td></tr>`;
+      countSpan.textContent = '0 sessions';
       return;
     }
 
-    countSpan.textContent = `Showing ${workouts.length} of ${totalWorkoutsCount}`;
-    paginationBar.style.display = workouts.length < totalWorkoutsCount ? 'flex' : 'none';
+    countSpan.textContent = `${workouts.length} session${workouts.length === 1 ? '' : 's'} loaded`;
 
     tbody.innerHTML = workouts
       .map((w) => {

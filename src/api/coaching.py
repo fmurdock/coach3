@@ -25,6 +25,8 @@ from src.schemas.coaching import (
     CoachingPhilosophyResponse,
     GeneratePlanRequest,
     LLMProviderResponse,
+    LocalModelsScanRequest,
+    LocalModelsScanResponse,
     ProviderHealthResponse,
     SavePhilosophyRequest,
     SaveProviderRequest,
@@ -33,7 +35,7 @@ from src.schemas.coaching import (
     TrainingSchedulePlanResponse,
 )
 from src.services.coaching_service import CoachingBusyError, CoachingService
-from src.services.llm_client import get_llm_client_for_config
+from src.services.llm_client import get_llm_client_for_config, list_local_models
 from src.services.philosophy_service import PhilosophyService
 
 router = APIRouter(prefix="/api/v1/coaching", tags=["Adaptive AI Coaching"])
@@ -225,6 +227,18 @@ async def test_provider_health(provider_id: uuid.UUID, db: AsyncSession = Depend
         return ProviderHealthResponse(status="invalid_credentials", latency_ms=0.0, message=str(exc))
 
     return await client.test_connection()
+
+
+@router.post("/providers/local/models", response_model=LocalModelsScanResponse)
+async def scan_local_llm_models(payload: LocalModelsScanRequest):
+    """Scans a local llama.cpp / OpenAI-compatible server for installed models."""
+    try:
+        models = await list_local_models(payload.endpoint_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return LocalModelsScanResponse(endpoint_url=payload.endpoint_url, models=models)
 
 
 # --- Philosophy Endpoints ---

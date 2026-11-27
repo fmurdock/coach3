@@ -65,18 +65,21 @@
 
     for (const item of queue) {
       const targetSessionId = item.sessionId || activeSessionId;
-      if (!targetSessionId) {
-        remaining.push(item);
-        continue;
-      }
+      const bodyPayload = targetSessionId
+        ? { session_id: targetSessionId, ...item.payload }
+        : item.payload;
       try {
-        const res = await authFetch(`/api/v1/gym/sessions/${targetSessionId}/sets`, {
+        const res = await authFetch('/api/v1/gym/sets', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(item.payload),
+          body: JSON.stringify(bodyPayload),
         });
         if (res.ok) {
           syncedCount += 1;
+          const committed = await res.json().catch(() => []);
+          if (!activeSessionId && Array.isArray(committed) && committed.length > 0 && committed[0].workout_session_id) {
+            activeSessionId = committed[0].workout_session_id;
+          }
         } else if (res.status >= 400 && res.status < 500) {
           // Validation error on queued item — drop to prevent infinite poison-pill retry
           const err = await res.json().catch(() => ({}));
@@ -93,6 +96,11 @@
     if (syncedCount > 0) {
       showToast(`Synced ${syncedCount} offline set submission(s)!`, 'success');
       if (activeSessionId) {
+        const sessRes = await authFetch('/api/v1/gym/sessions/active').catch(() => null);
+        if (sessRes && sessRes.ok) {
+          const sess = await sessRes.json().catch(() => null);
+          if (sess && sess.title) sessionBadge.textContent = sess.title;
+        }
         await loadSessionSets(activeSessionId);
       }
     }
@@ -123,9 +131,14 @@
       const res = await authFetch('/api/v1/gym/sessions/active');
       if (res.ok) {
         const session = await res.json();
-        activeSessionId = session.id;
-        sessionBadge.textContent = session.title || 'Strength Session';
-        await loadSessionSets(activeSessionId);
+        if (session && session.id) {
+          activeSessionId = session.id;
+          sessionBadge.textContent = session.title || 'Strength Session';
+          await loadSessionSets(activeSessionId);
+        } else {
+          activeSessionId = null;
+          sessionBadge.textContent = 'Ready to Log';
+        }
         await flushOfflineQueue();
       }
     } catch (err) {
@@ -413,17 +426,18 @@
       renderHistory();
     };
 
-    if (!navigator.onLine || !activeSessionId) {
+    if (!navigator.onLine) {
       queueOffline();
       return;
     }
 
     btnConfirm.disabled = true;
     try {
-      const res = await authFetch(`/api/v1/gym/sessions/${activeSessionId}/sets`, {
+      const commitBody = activeSessionId ? { session_id: activeSessionId, ...payload } : payload;
+      const res = await authFetch('/api/v1/gym/sets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(commitBody),
       });
 
       if (!res.ok) {
@@ -432,6 +446,14 @@
       }
 
       const committedSets = await res.json();
+      if (!activeSessionId && Array.isArray(committedSets) && committedSets.length > 0 && committedSets[0].workout_session_id) {
+        activeSessionId = committedSets[0].workout_session_id;
+        const sessRes = await authFetch('/api/v1/gym/sessions/active').catch(() => null);
+        if (sessRes && sessRes.ok) {
+          const sess = await sessRes.json().catch(() => null);
+          if (sess && sess.title) sessionBadge.textContent = sess.title;
+        }
+      }
       committedSets.forEach((s) => loggedSets.unshift(s));
       renderHistory();
 
@@ -461,6 +483,10 @@
         throw new Error(err.detail || 'Delete failed');
       }
       loggedSets = loggedSets.filter((s) => s.id !== setId);
+      if (loggedSets.length === 0) {
+        activeSessionId = null;
+        sessionBadge.textContent = 'Ready to Log';
+      }
       renderHistory();
       showToast('Set removed.', 'info');
     } catch (err) {

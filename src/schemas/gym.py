@@ -54,6 +54,10 @@ class ParsedStageResponse(BaseModel):
 
 class CommitSetsRequest(BaseModel):
     """Client request to persist confirmed sets to a workout session."""
+    session_id: uuid.UUID | None = Field(
+        default=None,
+        description="Optional target workout session ID; if omitted, attaches to active <4h session or creates one lazily",
+    )
     idempotency_key: str = Field(..., min_length=1, max_length=100, description="Client generated UUID")
     raw_transcript: str | None = None
     confidence_score: float | None = None

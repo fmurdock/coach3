@@ -3,8 +3,9 @@
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 import uuid
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import desc, or_, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -165,17 +166,13 @@ async def list_exercises(
     ]
 
 
-@router.get("/sessions/active", response_model=WorkoutSessionResponse)
-async def get_or_create_active_strength_session(db: AsyncSession = Depends(get_db)):
-    """Retrieves an ongoing strength workout session or creates a new one."""
-    user = await get_or_create_default_user(db)
-    now = datetime.now(timezone.utc)
+async def _find_active_strength_session(db: AsyncSession, user_id: uuid.UUID, now: datetime) -> WorkoutSession | None:
+    """Finds an active strength session for the user started within the last 4 hours."""
     recent_cutoff = now - timedelta(hours=4)
-
     q = (
         select(WorkoutSession)
         .where(
-            WorkoutSession.user_id == user.id,
+            WorkoutSession.user_id == user_id,
             WorkoutSession.discipline == "strength",
             WorkoutSession.status == "active",
             WorkoutSession.start_time_utc >= recent_cutoff,
@@ -183,28 +180,38 @@ async def get_or_create_active_strength_session(db: AsyncSession = Depends(get_d
         .order_by(desc(WorkoutSession.start_time_utc))
     )
     res = await db.execute(q)
-    session = res.scalars().first()
+    return res.scalars().first()
 
-    if not session:
-        session = WorkoutSession(
-            id=uuid.uuid4(),
-            user_id=user.id,
-            provider="coach3_gym",
-            external_id=f"gym_{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
-            discipline="strength",
-            title=f"Gym Strength Session {now.strftime('%b %d')}",
-            start_time_utc=now,
-            local_timezone=user.timezone or "UTC",
-            total_duration_sec=0.0,
-            active_duration_sec=0.0,
-            total_distance_m=0.0,
-            status="active",
-        )
-        db.add(session)
-        await db.flush()
-        await db.refresh(session)
 
-    return session
+def _create_gym_session(user_id: uuid.UUID, user_timezone: str | None, now: datetime) -> WorkoutSession:
+    """Instantiates a new strength WorkoutSession titled in the athlete's configured local timezone."""
+    try:
+        tz = ZoneInfo(user_timezone or "UTC")
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("UTC")
+    local_now = now.astimezone(tz)
+    return WorkoutSession(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        provider="coach3_gym",
+        external_id=f"gym_{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+        discipline="strength",
+        title=f"Gym Strength Session {local_now.strftime('%b %d')}",
+        start_time_utc=now,
+        local_timezone=user_timezone or "UTC",
+        total_duration_sec=0.0,
+        active_duration_sec=0.0,
+        total_distance_m=0.0,
+        status="active",
+    )
+
+
+@router.get("/sessions/active", response_model=WorkoutSessionResponse | None)
+async def get_active_strength_session(db: AsyncSession = Depends(get_db)):
+    """Read-only lookup for an ongoing strength workout session within the last 4 hours."""
+    user = await get_or_create_default_user(db)
+    now = datetime.now(timezone.utc)
+    return await _find_active_strength_session(db, user.id, now)
 
 
 @router.get("/sessions/{session_id}/sets", response_model=list[StrengthSetResponse])
@@ -232,23 +239,28 @@ async def list_session_sets(
     return [_to_set_response(s) for s in res.scalars().all()]
 
 
-@router.post("/sessions/{session_id}/sets", response_model=list[StrengthSetResponse], status_code=status.HTTP_201_CREATED)
-async def commit_strength_sets(
-    session_id: uuid.UUID,
+async def _commit_sets_impl(
+    db: AsyncSession,
     payload: CommitSetsRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """Atomically commits confirmed strength sets to a session with exact submission-level idempotency."""
+    explicit_session_id: uuid.UUID | None = None,
+) -> list[StrengthSetResponse]:
+    """Atomically commits confirmed strength sets with exact submission-level idempotency and lazy session creation."""
     user = await get_or_create_default_user(db)
+    target_session_id = explicit_session_id or payload.session_id
 
-    # 1. Exact Submission Idempotency Check (prevents prefix collisions like key_1 vs key_10)
+    # 1. Exact Submission Idempotency Check (scoped to user, or session if explicitly provided)
+    existing_filters = [
+        StrengthSet.submission_key == payload.idempotency_key,
+        WorkoutSession.user_id == user.id,
+    ]
+    if target_session_id is not None:
+        existing_filters.append(StrengthSet.workout_session_id == target_session_id)
+
     existing_q = (
         select(StrengthSet)
+        .join(WorkoutSession, StrengthSet.workout_session_id == WorkoutSession.id)
         .options(selectinload(StrengthSet.exercise))
-        .where(
-            StrengthSet.workout_session_id == session_id,
-            StrengthSet.submission_key == payload.idempotency_key,
-        )
+        .where(*existing_filters)
         .order_by(StrengthSet.set_index)
     )
     existing_res = await db.execute(existing_q)
@@ -256,15 +268,26 @@ async def commit_strength_sets(
     if existing_sets:
         return [_to_set_response(s) for s in existing_sets]
 
-    # 2. Verify Session exists and belongs to current athlete
-    sess_q = select(WorkoutSession).where(
-        WorkoutSession.id == session_id,
-        WorkoutSession.user_id == user.id,
-    )
-    sess_res = await db.execute(sess_q)
-    session = sess_res.scalar_one_or_none()
-    if not session:
-        raise HTTPException(status_code=404, detail=f"Workout session {session_id} not found")
+    now = datetime.now(timezone.utc)
+
+    # 2. Resolve explicit session OR lazily find/create an active strength session
+    if target_session_id is not None:
+        sess_q = select(WorkoutSession).where(
+            WorkoutSession.id == target_session_id,
+            WorkoutSession.user_id == user.id,
+        )
+        sess_res = await db.execute(sess_q)
+        session = sess_res.scalar_one_or_none()
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Workout session {target_session_id} not found")
+    else:
+        session = await _find_active_strength_session(db, user.id, now)
+        if session is None:
+            session = _create_gym_session(user.id, user.timezone, now)
+            db.add(session)
+            await db.flush()
+
+    session_id = session.id
 
     # 3. Determine current highest set_index in session
     idx_q = (
@@ -275,7 +298,6 @@ async def commit_strength_sets(
     idx_res = await db.execute(idx_q)
     highest_idx = idx_res.scalars().first() or 0
 
-    now = datetime.now(timezone.utc)
     created_sets: list[StrengthSet] = []
     seq = 0
 
@@ -338,12 +360,31 @@ async def commit_strength_sets(
     return [_to_set_response(s) for s in saved_sets]
 
 
+@router.post("/sets", response_model=list[StrengthSetResponse], status_code=status.HTTP_201_CREATED)
+async def commit_strength_sets_lazy(
+    payload: CommitSetsRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Commits confirmed strength sets, lazily creating or reusing an active strength session."""
+    return await _commit_sets_impl(db, payload)
+
+
+@router.post("/sessions/{session_id}/sets", response_model=list[StrengthSetResponse], status_code=status.HTTP_201_CREATED)
+async def commit_strength_sets(
+    session_id: uuid.UUID,
+    payload: CommitSetsRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Atomically commits confirmed strength sets to an explicit session."""
+    return await _commit_sets_impl(db, payload, explicit_session_id=session_id)
+
+
 @router.delete("/sets/{set_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_strength_set(
     set_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    """Deletes a single strength set belonging to the current athlete."""
+    """Deletes a single strength set and cleans up the parent gym session if it becomes empty."""
     user = await get_or_create_default_user(db)
     stmt = (
         select(StrengthSet)
@@ -357,7 +398,28 @@ async def delete_strength_set(
     s_row = res.scalar_one_or_none()
     if s_row is None:
         raise HTTPException(status_code=404, detail="Strength set not found")
+
+    parent_session_id = s_row.workout_session_id
     await db.delete(s_row)
     await db.flush()
+
+    remaining_count = (
+        await db.execute(
+            select(func.count(StrengthSet.id)).where(StrengthSet.workout_session_id == parent_session_id)
+        )
+    ).scalar() or 0
+    if remaining_count == 0:
+        sess_res = await db.execute(
+            select(WorkoutSession).where(
+                WorkoutSession.id == parent_session_id,
+                WorkoutSession.user_id == user.id,
+                WorkoutSession.provider == "coach3_gym",
+            )
+        )
+        parent_sess = sess_res.scalar_one_or_none()
+        if parent_sess is not None:
+            await db.delete(parent_sess)
+            await db.flush()
+
     return None
 

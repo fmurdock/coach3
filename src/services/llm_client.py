@@ -1,14 +1,64 @@
 """Dual-Engine LLM HTTP Clients for Google Gemini and local llama.cpp."""
 
 import abc
+import os
+import re
 import time
 from typing import Optional
+from urllib.parse import urlparse, urlunparse
 import httpx
 
 from src.core.http_client import request_with_retry, validate_endpoint_url
 from src.core.logging import redact_secrets
 from src.core.security import decrypt_token_safe
 from src.schemas.coaching import ProviderHealthResponse
+
+
+_TEST_FITNESS_PROMPT = "In one short sentence, explain Zone 2 cardio."
+
+
+def _strip_json_fences(text: str) -> str:
+    """Strip optional markdown code fences around JSON output."""
+    cleaned = text.strip()
+    fence_match = re.match(r"^```(?:json)?\s*\n?(.*?)\n?```$", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    if fence_match:
+        return fence_match.group(1).strip()
+    return cleaned
+
+
+def _is_running_in_docker() -> bool:
+    """Return True when executing inside a Docker container."""
+    return os.path.exists("/.dockerenv")
+
+
+def _docker_host_fallback_url(url: str) -> Optional[str]:
+    """Return a host.docker.internal equivalent when in Docker and targeting localhost."""
+    if not _is_running_in_docker():
+        return None
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+    except Exception:
+        return None
+    if host not in ("localhost", "127.0.0.1", "::1"):
+        return None
+    netloc = f"host.docker.internal:{parsed.port}" if parsed.port else "host.docker.internal"
+    candidate = urlunparse(parsed._replace(netloc=netloc))
+    try:
+        return validate_endpoint_url(candidate, allow_private_lan=True)
+    except ValueError:
+        return None
+
+
+def _docker_localhost_hint(url: str) -> str:
+    """Return a helpful hint if running inside Docker and targeting localhost."""
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        host = ""
+    if host in ("localhost", "127.0.0.1", "::1") and _is_running_in_docker():
+        return " (Running inside Docker? Use host.docker.internal or your LAN IP instead of localhost.)"
+    return ""
 
 
 class BaseLLMClient(abc.ABC):
@@ -53,11 +103,10 @@ class GeminiClient(BaseLLMClient):
         try:
             url = self._endpoint()
             payload = {
-                "contents": [{"role": "user", "parts": [{"text": 'Ping. Respond with {"status": "ok"}'}]}],
+                "contents": [{"role": "user", "parts": [{"text": _TEST_FITNESS_PROMPT}]}],
                 "generationConfig": {
-                    "temperature": 0.1,
-                    "maxOutputTokens": 20,
-                    "responseMimeType": "application/json",
+                    "temperature": 0.2,
+                    "maxOutputTokens": 128,
                 },
             }
             async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
@@ -72,10 +121,21 @@ class GeminiClient(BaseLLMClient):
                 lat = (time.perf_counter() - t0) * 1000
 
                 if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
+                    reply_text = str(parts[0].get("text", "")).strip() if parts else ""
+                    if not reply_text:
+                        return ProviderHealthResponse(
+                            status="error",
+                            latency_ms=round(lat, 1),
+                            message=f"Google Gemini ({self.model_name}) returned an empty response.",
+                        )
+                    preview = redact_secrets(reply_text[:80])
                     return ProviderHealthResponse(
                         status="healthy",
                         latency_ms=round(lat, 1),
-                        message=f"Connected to Google Gemini ({self.model_name}) in {lat:.1f}ms",
+                        message=f"Connected to Google Gemini ({self.model_name}) in {lat:.1f}ms — \"{preview}\"",
                     )
                 elif resp.status_code in (401, 403):
                     return ProviderHealthResponse(
@@ -143,43 +203,86 @@ class LlamaCppClient(BaseLLMClient):
     ):
         validated = validate_endpoint_url(endpoint_url, allow_private_lan=True)
         base = validated.rstrip("/")
-        if not base.endswith("/v1"):
-            self.completions_url = f"{base}/v1/chat/completions"
-        else:
+        if base.endswith("/chat/completions"):
+            self.completions_url = base
+        elif base.endswith("/v1"):
             self.completions_url = f"{base}/chat/completions"
+        else:
+            self.completions_url = f"{base}/v1/chat/completions"
 
         self.model_name = model_name
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout_sec = timeout_sec
 
-    async def test_connection(self) -> ProviderHealthResponse:
-        t0 = time.perf_counter()
+    async def _post_completions(
+        self,
+        client: httpx.AsyncClient,
+        payload: dict[str, object],
+        *,
+        max_attempts: int,
+    ) -> httpx.Response:
+        """POST chat completions, falling back to host.docker.internal when running in Docker."""
+        original_url = self.completions_url
+        fallback_url = _docker_host_fallback_url(original_url)
         try:
-            payload = {
-                "model": self.model_name,
-                "messages": [
-                    {"role": "user", "content": 'Ping. Respond with {"status": "ok"}'}
-                ],
-                "temperature": 0.1,
-                "max_tokens": 20,
-                "response_format": {"type": "json_object"},
-            }
-            async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
+            return await request_with_retry(
+                client,
+                "POST",
+                original_url,
+                json=payload,
+                max_attempts=1 if fallback_url else max_attempts,
+            )
+        except (httpx.ConnectError, httpx.TimeoutException):
+            if not fallback_url:
+                raise
+            try:
                 resp = await request_with_retry(
                     client,
                     "POST",
-                    self.completions_url,
+                    fallback_url,
                     json=payload,
-                    max_attempts=2,
+                    max_attempts=max_attempts,
                 )
+            except (httpx.ConnectError, httpx.TimeoutException) as fallback_exc:
+                raise RuntimeError(
+                    f"Local LLM server unreachable at {original_url} (and {fallback_url} from Docker): "
+                    f"{redact_secrets(str(fallback_exc))}. Ensure a local LLM server (e.g., llama.cpp, "
+                    "Ollama, LM Studio) is running on the host and listening on that port."
+                ) from fallback_exc
+            self.completions_url = fallback_url
+            return resp
+
+    async def test_connection(self) -> ProviderHealthResponse:
+        t0 = time.perf_counter()
+        try:
+            payload: dict[str, object] = {
+                "model": self.model_name,
+                "messages": [
+                    {"role": "user", "content": _TEST_FITNESS_PROMPT}
+                ],
+                "temperature": 0.2,
+                "max_tokens": 64,
+            }
+            async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
+                resp = await self._post_completions(client, payload, max_attempts=2)
                 lat = (time.perf_counter() - t0) * 1000
 
                 if resp.status_code == 200:
+                    data = resp.json()
+                    choices = data.get("choices", [])
+                    reply_text = str(choices[0].get("message", {}).get("content", "")).strip() if choices else ""
+                    if not reply_text:
+                        return ProviderHealthResponse(
+                            status="error",
+                            latency_ms=round(lat, 1),
+                            message=f"llama.cpp ({self.model_name}) returned an empty response.",
+                        )
+                    preview = redact_secrets(reply_text[:80])
                     return ProviderHealthResponse(
                         status="healthy",
                         latency_ms=round(lat, 1),
-                        message=f"Connected to local llama.cpp ({self.model_name}) in {lat:.1f}ms",
+                        message=f"Connected to local llama.cpp ({self.model_name}) in {lat:.1f}ms — \"{preview}\"",
                     )
                 else:
                     safe_body = redact_secrets(resp.text[:120])
@@ -190,14 +293,22 @@ class LlamaCppClient(BaseLLMClient):
                     )
         except Exception as e:
             lat = (time.perf_counter() - t0) * 1000
+            err_msg = str(e)
+            if isinstance(e, RuntimeError) and "from Docker" in err_msg:
+                return ProviderHealthResponse(
+                    status="unreachable",
+                    latency_ms=round(lat, 1),
+                    message=err_msg,
+                )
+            hint = _docker_localhost_hint(self.completions_url)
             return ProviderHealthResponse(
                 status="unreachable",
                 latency_ms=round(lat, 1),
-                message=f"llama.cpp server unreachable at {self.completions_url}: {redact_secrets(str(e))}",
+                message=f"llama.cpp server unreachable at {self.completions_url}: {redact_secrets(err_msg)}{hint}",
             )
 
     async def generate_structured(self, system_prompt: str, user_prompt: str) -> str:
-        payload = {
+        payload: dict[str, object] = {
             "model": self.model_name,
             "messages": [
                 {"role": "system", "content": system_prompt},
@@ -208,13 +319,11 @@ class LlamaCppClient(BaseLLMClient):
             "response_format": {"type": "json_object"},
         }
         async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
-            resp = await request_with_retry(
-                client,
-                "POST",
-                self.completions_url,
-                json=payload,
-                max_attempts=3,
-            )
+            resp = await self._post_completions(client, payload, max_attempts=3)
+            if resp.status_code in (400, 422):
+                # Some llama.cpp / OpenAI-compatible servers reject response_format
+                fallback_payload = {k: v for k, v in payload.items() if k != "response_format"}
+                resp = await self._post_completions(client, fallback_payload, max_attempts=2)
             if resp.status_code != 200:
                 raise RuntimeError(
                     f"llama.cpp server error ({resp.status_code}): {redact_secrets(resp.text[:250])}"
@@ -223,7 +332,48 @@ class LlamaCppClient(BaseLLMClient):
             choices = data.get("choices", [])
             if not choices:
                 raise RuntimeError("llama.cpp returned zero choices")
-            return str(choices[0].get("message", {}).get("content", ""))
+            return _strip_json_fences(str(choices[0].get("message", {}).get("content", "")))
+
+
+async def list_local_models(endpoint_url: str, timeout_sec: float = 10.0) -> list[str]:
+    """Query a local OpenAI-compatible / llama.cpp server for installed model IDs."""
+    validated = validate_endpoint_url(endpoint_url, allow_private_lan=True)
+    base = validated.rstrip("/")
+    for suffix in ("/v1/chat/completions", "/chat/completions", "/v1/models", "/models"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    models_url = f"{base}/models" if base.endswith("/v1") else f"{base}/v1/models"
+
+    async with httpx.AsyncClient(timeout=timeout_sec) as client:
+        try:
+            resp = await request_with_retry(client, "GET", models_url, max_attempts=2)
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as exc:
+            fallback_url = _docker_host_fallback_url(models_url)
+            if fallback_url:
+                resp = await request_with_retry(client, "GET", fallback_url, max_attempts=2)
+            else:
+                raise RuntimeError(
+                    f"Could not reach local LLM server at {models_url}: {redact_secrets(str(exc))}"
+                ) from exc
+
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"Local LLM server returned status {resp.status_code} from {models_url}: "
+            f"{redact_secrets(resp.text[:160])}"
+        )
+
+    payload = resp.json()
+    models: list[str] = []
+    if isinstance(payload, dict):
+        for item in payload.get("data") or []:
+            if isinstance(item, dict) and item.get("id"):
+                models.append(str(item["id"]))
+        if not models:
+            for item in payload.get("models") or []:
+                if isinstance(item, dict) and (item.get("id") or item.get("name")):
+                    models.append(str(item.get("id") or item.get("name")))
+    return models
 
 
 def get_llm_client_for_config(

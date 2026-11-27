@@ -1,0 +1,50 @@
+openapi: 3.1.0
+info:
+  title: Coach3 008-remediation2 API Deltas
+  version: 1.0.0
+paths:
+  /api/v1/gym/sessions/active:
+    get:
+      summary: Read-only lookup for an active strength session in the last 4 hours
+      responses:
+        "200":
+          description: Active WorkoutSessionResponse if one exists, or null (never creates a blank session)
+  /api/v1/gym/sets:
+    post:
+      summary: Commit strength sets, lazily attaching to or creating an active strength session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idempotency_key, sets]
+              properties:
+                session_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+                idempotency_key:
+                  type: string
+                raw_transcript:
+                  type: string
+                  nullable: true
+                confidence_score:
+                  type: number
+                  nullable: true
+                was_edited:
+                  type: boolean
+                original_parsed_sets:
+                  type: array
+                  nullable: true
+                sets:
+                  type: array
+      responses:
+        "201":
+          description: Committed StrengthSetResponse list (each item includes workout_session_id)
+  /api/v1/coaching/providers/{provider_id}/test:
+    post:
+      summary: Send a short fitness-relevant prompt to verify live LLM connectivity and non-empty output
+      responses:
+        "200":
+          description: ProviderHealthResponse with status (healthy | invalid_credentials | unreachable | error)

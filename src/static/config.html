@@ -262,7 +262,17 @@
 
       <div class="form-group" id="aiEndpointGroup" style="display:none;">
         <label for="aiEndpointUrl">llama.cpp Endpoint URL</label>
-        <input type="text" id="aiEndpointUrl" value="http://localhost:8080/v1">
+        <div style="display:flex; gap:8px; align-items:center;">
+          <input type="text" id="aiEndpointUrl" value="http://localhost:8080/v1" style="flex:1;">
+          <button class="btn-secondary" id="btnScanLocalModels" type="button" style="white-space:nowrap;">Scan Models</button>
+        </div>
+      </div>
+
+      <div class="form-group" id="aiScannedModelsGroup" style="display:none;">
+        <label for="aiScannedModels">Detected Local Models</label>
+        <select id="aiScannedModels">
+          <option value="">Select a detected model…</option>
+        </select>
       </div>
 
       <div class="form-group" id="aiModelGroup">

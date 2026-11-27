@@ -251,3 +251,76 @@ async def test_analyze_and_plan_api(db_session: AsyncSession, sample_user, monke
         active_plan = resp.json()
         assert active_plan["id"] == plan["id"]
         assert active_plan["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_provider_test_endpoint_prompt_and_output(db_session: AsyncSession, sample_user, monkeypatch):
+    """POST /providers/{id}/test sends a short fitness prompt and surfaces non-empty output."""
+    import httpx
+
+    app.dependency_overrides[get_db] = lambda: db_session
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        save_resp = await client.post(
+            "/api/v1/coaching/providers",
+            json={
+                "provider_type": "llama_cpp",
+                "endpoint_url": "http://localhost:8080/v1",
+                "model_name": "qwen2.5-14b-instruct",
+                "temperature": 0.5,
+                "max_tokens": 1024,
+            },
+        )
+        assert save_resp.status_code == 200
+        provider_id = save_resp.json()["id"]
+
+        real_async_client = httpx.AsyncClient
+
+        def mock_handler(request: httpx.Request):
+            body = request.content.decode("utf-8")
+            assert "Zone 2" in body
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "Zone 2 builds aerobic endurance."}}]},
+            )
+
+        monkeypatch.setattr(
+            httpx,
+            "AsyncClient",
+            lambda *a, **kw: real_async_client(*a, **{**kw, "transport": httpx.MockTransport(mock_handler)}),
+        )
+        test_resp = await client.post(f"/api/v1/coaching/providers/{provider_id}/test")
+        assert test_resp.status_code == 200
+        health = test_resp.json()
+        assert health["status"] == "healthy"
+        assert "Zone 2 builds aerobic endurance." in health["message"]
+
+
+@pytest.mark.asyncio
+async def test_scan_local_models_endpoint(monkeypatch):
+    """POST /providers/local/models returns discovered model IDs from local server."""
+    import httpx
+
+    real_async_client = httpx.AsyncClient
+
+    def mock_handler(request: httpx.Request):
+        assert str(request.url).endswith("/v1/models")
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "Qwen2.5-14B-Instruct-Q4_K_M"}, {"id": "gemma-4-12b-it-Q4_K_M"}]},
+        )
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *a, **kw: real_async_client(*a, **{**kw, "transport": httpx.MockTransport(mock_handler)}),
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/coaching/providers/local/models",
+            json={"endpoint_url": "http://localhost:8080/v1"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["models"] == ["Qwen2.5-14B-Instruct-Q4_K_M", "gemma-4-12b-it-Q4_K_M"]

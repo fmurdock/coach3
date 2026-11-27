@@ -34,6 +34,15 @@ class ProviderHealthResponse(BaseModel):
     message: str
 
 
+class LocalModelsScanRequest(BaseModel):
+    endpoint_url: str = Field(default="http://localhost:8080/v1", min_length=1, max_length=512)
+
+
+class LocalModelsScanResponse(BaseModel):
+    endpoint_url: str
+    models: List[str]
+
+
 # --- Philosophy Schemas ---
 
 class SavePhilosophyRequest(BaseModel):

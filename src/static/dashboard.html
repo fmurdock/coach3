@@ -62,19 +62,55 @@
     .filter-pill.active {
       background: var(--accent);
       border-color: var(--accent);
-      color: #04101e;
-      font-weight: 700;
+      color: #ffffff;
+      font-weight: 600;
     }
 
     .kpi-grid {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
       gap: 12px;
-      margin-bottom: 24px;
+      margin-bottom: 20px;
     }
 
     @media (min-width: 768px) { .kpi-grid { grid-template-columns: repeat(3, 1fr); } }
-    @media (min-width: 1024px) { .kpi-grid { grid-template-columns: repeat(6, 1fr); } }
+    @media (min-width: 1024px) { .kpi-grid { grid-template-columns: repeat(5, 1fr); } }
+
+    .kpi-grid-lifting {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    @media (min-width: 1024px) { .kpi-grid-lifting { grid-template-columns: repeat(4, 1fr); } }
+
+    .modality-tabs {
+      display: inline-flex;
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 4px;
+      gap: 4px;
+      margin-bottom: 20px;
+    }
+
+    .modality-tab {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 18px;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .modality-tab:hover {
+      color: var(--text);
+    }
+
+    .modality-tab.active {
+      background: var(--accent);
+      color: #ffffff;
+    }
 
     .kpi-card {
       background: var(--card);
@@ -173,7 +209,7 @@
 
     .route-card-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
     .route-card-title { font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
-    .route-map-wrap { width: 100%; background: radial-gradient(circle at center, #0e172a 0%, #060a13 100%); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; overflow: hidden; }
+    .route-map-wrap { width: 100%; background: var(--card-subtle); border: 1px solid var(--card-border); border-radius: 8px; overflow: hidden; }
     .route-map-meta { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--text-muted); }
     .gpx-upload-btn { background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.35); color: var(--accent); font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
 
@@ -226,157 +262,228 @@
       <button type="button" class="date-apply-btn" id="btn-apply-dates">Apply</button>
     </div>
 
-    <button id="btn-sync" type="button" class="filter-pill" style="margin-left:auto; display:flex; align-items:center; gap:6px; background:rgba(56, 189, 248, 0.1); border-color:var(--accent); color:var(--accent);">
-      <span>🔄</span> Sync Now
+    <button id="btn-sync" type="button" class="filter-pill" style="margin-left:auto; display:flex; align-items:center; gap:6px; background:var(--card); border-color:var(--card-border); color:var(--text);">
+      Sync Now
     </button>
   </div>
 
-  <!-- KPI Summary Grid -->
-  <div class="kpi-grid">
-    <div class="kpi-card">
-      <span class="kpi-title">Total Duration</span>
-      <span class="kpi-value" id="kpi-duration">0.0h</span>
-      <span class="kpi-sub" id="kpi-duration-sub">All training</span>
-    </div>
-    <div class="kpi-card">
-      <span class="kpi-title">Zone 2 Cardio</span>
-      <span class="kpi-value" id="kpi-zone2">0.0h</span>
-      <span class="kpi-sub" id="kpi-zone2-sub">0% of cardio</span>
-    </div>
-    <div class="kpi-card">
-      <span class="kpi-title">VO2 Max Stimulus</span>
-      <span class="kpi-value" id="kpi-vo2max" style="color:var(--vo2max);">0m</span>
-      <span class="kpi-sub" id="kpi-vo2max-sub">Zone 5 minutes</span>
-    </div>
-    <div class="kpi-card">
-      <span class="kpi-title">Running</span>
-      <span class="kpi-value" id="kpi-run">0.0 mi</span>
-      <span class="kpi-sub" id="kpi-run-sub">Outdoor miles</span>
-    </div>
-    <div class="kpi-card">
-      <span class="kpi-title">Erg Work</span>
-      <span class="kpi-value" id="kpi-erg">0 m</span>
-      <span class="kpi-sub" id="kpi-erg-sub">Row + Bike meters</span>
-    </div>
-    <div class="kpi-card">
-      <span class="kpi-title">Working Sets</span>
-      <span class="kpi-value" id="kpi-sets">0</span>
-      <span class="kpi-sub" id="kpi-sets-sub">Excludes warmups</span>
-    </div>
+  <!-- Modality Tabs -->
+  <div class="modality-tabs" role="tablist" aria-label="Dashboard modality">
+    <button type="button" role="tab" id="tab-cardio" class="modality-tab active" aria-selected="true" data-tab="cardio">Cardio</button>
+    <button type="button" role="tab" id="tab-lifting" class="modality-tab" aria-selected="false" data-tab="lifting">Lifting</button>
   </div>
 
-  <!-- Macro Cardio Charts -->
-  <div class="macro-grid">
-    <div class="section-card">
+  <!-- CARDIO TAB PANEL -->
+  <div id="tab-panel-cardio" role="tabpanel" aria-labelledby="tab-cardio">
+    <!-- Cardio KPI Summary Grid -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <span class="kpi-title">Cardio Duration</span>
+        <span class="kpi-value" id="kpi-duration">0.0h</span>
+        <span class="kpi-sub" id="kpi-duration-sub">Endurance training</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Zone 2 Cardio</span>
+        <span class="kpi-value" id="kpi-zone2">0.0h</span>
+        <span class="kpi-sub" id="kpi-zone2-sub">0% of cardio</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">VO2 Max Stimulus</span>
+        <span class="kpi-value" id="kpi-vo2max" style="color:var(--vo2max);">0m</span>
+        <span class="kpi-sub" id="kpi-vo2max-sub">Zone 5 minutes</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Running</span>
+        <span class="kpi-value" id="kpi-run">0.0 mi</span>
+        <span class="kpi-sub" id="kpi-run-sub">Outdoor miles</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Erg Work</span>
+        <span class="kpi-value" id="kpi-erg">0 m</span>
+        <span class="kpi-sub" id="kpi-erg-sub">Row + Bike meters</span>
+      </div>
+    </div>
+
+    <!-- Macro Cardio Charts -->
+    <div class="macro-grid">
+      <div class="section-card">
+        <div class="section-header">
+          <div>
+            <h3 class="section-title">Zone 2 Cardio</h3>
+            <p class="section-subtitle">Weekly aerobic base minutes vs. 120 min/week goal</p>
+          </div>
+          <div class="stat-badge-group">
+            <span class="stat-pill pill-z2" id="pill-cardio-z2">0m · 0m/wk avg</span>
+            <span class="stat-pill pill-z2" id="pill-goal-z2">Goal: 120m/wk</span>
+          </div>
+        </div>
+        <div class="chart-container"><canvas id="zone2MacroChart"></canvas></div>
+      </div>
+
+      <div class="section-card">
+        <div class="section-header">
+          <div>
+            <h3 class="section-title">VO2 Max &amp; High-Intensity</h3>
+            <p class="section-subtitle">Weekly Zone 5 (≥90% Max HR) vs. 20 min/wk goal + Zone 4 threshold work</p>
+          </div>
+          <div class="stat-badge-group">
+            <span class="stat-pill pill-vo2" id="pill-cardio-vo2">Z5: 0m · Z4: 0m</span>
+            <span class="stat-pill pill-vo2" id="pill-goal-vo2">Goal: 20m/wk</span>
+          </div>
+        </div>
+        <div class="chart-container"><canvas id="vo2MacroChart"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Cardio PRs & HR Zone Distribution -->
+    <div class="middle-grid">
+      <div class="section-card">
+        <div class="section-header">
+          <h3 class="section-title">Cardio Personal Records</h3>
+        </div>
+        <div class="pr-list" id="pr-list-cardio">
+          <div class="empty-state">Loading cardio records...</div>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <div class="section-header">
+          <h3 class="section-title">Heart Rate Zone Distribution</h3>
+        </div>
+        <div class="chart-container" style="height: 220px;"><canvas id="hrZoneChart"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Cardio Workouts Table -->
+    <div class="section-card" style="margin-bottom: 24px;">
       <div class="section-header">
         <div>
-          <h3 class="section-title">💚 Zone 2 Cardio</h3>
-          <p class="section-subtitle">Weekly aerobic base minutes vs. 120 min/week goal</p>
+          <h3 class="section-title">Cardio Workouts &amp; Telemetry</h3>
+          <p class="section-subtitle">Click any session to inspect heart rate, measured pace, route map, or edit title &amp; notes</p>
         </div>
-        <div class="stat-badge-group">
-          <span class="stat-pill pill-z2" id="pill-cardio-z2">0m · 0m/wk avg</span>
-          <span class="stat-pill pill-z2" id="pill-goal-z2">Goal: 120m/wk</span>
-        </div>
+        <span style="font-size:12px; color:var(--text-muted);" id="recent-workouts-count-cardio"></span>
       </div>
-      <div class="chart-container"><canvas id="zone2MacroChart"></canvas></div>
+
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Sport</th>
+              <th>Workout Title</th>
+              <th>Duration</th>
+              <th>Volume</th>
+              <th>Key Highlight</th>
+              <th style="text-align:right;">Details</th>
+            </tr>
+          </thead>
+          <tbody id="workouts-table-body-cardio">
+            <tr><td colspan="7" style="text-align:center; color:var(--text-muted);">Loading cardio workouts...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- LIFTING TAB PANEL -->
+  <div id="tab-panel-lifting" role="tabpanel" aria-labelledby="tab-lifting" style="display:none;">
+    <!-- Lifting KPI Summary Grid -->
+    <div class="kpi-grid kpi-grid-lifting">
+      <div class="kpi-card">
+        <span class="kpi-title">Lifting Sessions</span>
+        <span class="kpi-value" id="kpi-lifting-sessions">0</span>
+        <span class="kpi-sub">In selected window</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Working Sets</span>
+        <span class="kpi-value" id="kpi-sets">0</span>
+        <span class="kpi-sub" id="kpi-sets-sub">Excludes warmups</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Total Volume</span>
+        <span class="kpi-value" id="kpi-lifting-volume">0 lbs</span>
+        <span class="kpi-sub">Working sets tonnage</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Top Est. 1RM</span>
+        <span class="kpi-value" id="kpi-top-e1rm">—</span>
+        <span class="kpi-sub" id="kpi-top-e1rm-sub">Epley formula</span>
+      </div>
     </div>
 
-    <div class="section-card">
+    <!-- Resistance Volume -->
+    <div class="section-card" style="margin-bottom: 24px;">
       <div class="section-header">
         <div>
-          <h3 class="section-title">🔥 VO2 Max &amp; High-Intensity</h3>
-          <p class="section-subtitle">Weekly Zone 5 (≥90% Max HR) vs. 20 min/wk goal + Zone 4 threshold work</p>
+          <h3 class="section-title">Resistance Volume (Push / Pull / Legs / Abs)</h3>
+          <p class="section-subtitle">Weekly working sets vs. 10 sets/week per category, with paired top lift &amp; canonical Epley 1RM</p>
         </div>
         <div class="stat-badge-group">
-          <span class="stat-pill pill-vo2" id="pill-cardio-vo2">Z5: 0m · Z4: 0m</span>
-          <span class="stat-pill pill-vo2" id="pill-goal-vo2">Goal: 20m/wk</span>
+          <span class="stat-pill" style="background:rgba(148,163,184,0.14); color:var(--text); border:1px solid var(--card-border);" id="pill-total-sets">0 Total Sets</span>
         </div>
       </div>
-      <div class="chart-container"><canvas id="vo2MacroChart"></canvas></div>
-    </div>
-  </div>
-
-  <!-- Resistance Volume -->
-  <div class="section-card" style="margin-bottom: 24px;">
-    <div class="section-header">
-      <div>
-        <h3 class="section-title">🏋️ Resistance Volume (Push / Pull / Legs / Abs)</h3>
-        <p class="section-subtitle">Weekly working sets vs. 10 sets/week per category, with paired top lift &amp; canonical Epley 1RM</p>
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th>Weekly Goal (10 sets/wk)</th>
+              <th>Window Sets</th>
+              <th>Top Working Set</th>
+              <th>Exercise</th>
+              <th>Est. 1RM (Epley)</th>
+            </tr>
+          </thead>
+          <tbody id="muscle-table-body">
+            <tr><td colspan="6" style="text-align:center; color:var(--text-muted);">Loading resistance categories...</td></tr>
+          </tbody>
+        </table>
       </div>
-      <div class="stat-badge-group">
-        <span class="stat-pill" style="background:rgba(168,85,247,0.15); color:var(--purple); border:1px solid rgba(168,85,247,0.3);" id="pill-total-sets">0 Total Sets</span>
-      </div>
     </div>
-    <div class="table-container">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Category</th>
-            <th>Weekly Goal (10 sets/wk)</th>
-            <th>Window Sets</th>
-            <th>Top Working Set</th>
-            <th>Exercise</th>
-            <th>Est. 1RM (Epley)</th>
-          </tr>
-        </thead>
-        <tbody id="muscle-table-body">
-          <tr><td colspan="6" style="text-align:center; color:var(--text-muted);">Loading resistance categories...</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
 
-  <!-- Middle Grid: PRs & HR Zone Distribution -->
-  <div class="middle-grid">
-    <div class="section-card">
+    <!-- Strength PRs -->
+    <div class="section-card" style="margin-bottom: 24px;">
       <div class="section-header">
-        <h3 class="section-title">🏆 Personal Records &amp; Peaks</h3>
+        <h3 class="section-title">Strength Personal Records</h3>
       </div>
-      <div class="pr-list" id="pr-list-container">
-        <div class="empty-state">Loading personal records...</div>
+      <div class="pr-list" id="pr-list-lifting">
+        <div class="empty-state">Loading strength records...</div>
       </div>
     </div>
 
-    <div class="section-card">
+    <!-- Lifting Workouts Table -->
+    <div class="section-card" style="margin-bottom: 24px;">
       <div class="section-header">
-        <h3 class="section-title">📊 Heart Rate Zone Distribution</h3>
+        <div>
+          <h3 class="section-title">Lifting Sessions</h3>
+          <p class="section-subtitle">Click any session to inspect logged sets or edit title &amp; notes</p>
+        </div>
+        <span style="font-size:12px; color:var(--text-muted);" id="recent-workouts-count-lifting"></span>
       </div>
-      <div class="chart-container" style="height: 220px;"><canvas id="hrZoneChart"></canvas></div>
+
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Sport</th>
+              <th>Workout Title</th>
+              <th>Duration</th>
+              <th>Volume</th>
+              <th>Key Highlight</th>
+              <th style="text-align:right;">Details</th>
+            </tr>
+          </thead>
+          <tbody id="workouts-table-body-lifting">
+            <tr><td colspan="7" style="text-align:center; color:var(--text-muted);">Loading lifting sessions...</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 
-  <!-- Recent Workouts Table + Pagination -->
-  <div class="section-card" style="margin-bottom: 24px;">
-    <div class="section-header">
-      <div>
-        <h3 class="section-title">⏱️ Recent Workouts &amp; Telemetry Drill-Down</h3>
-        <p class="section-subtitle">Click any workout to inspect heart rate, measured pace, route map, or edit title &amp; notes</p>
-      </div>
-      <span style="font-size:12px; color:var(--text-muted);" id="recent-workouts-count"></span>
-    </div>
-
-    <div class="table-container">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Sport</th>
-            <th>Workout Title</th>
-            <th>Duration</th>
-            <th>Volume</th>
-            <th>Key Highlight</th>
-            <th style="text-align:right;">Details</th>
-          </tr>
-        </thead>
-        <tbody id="workouts-table-body">
-          <tr><td colspan="7" style="text-align:center; color:var(--text-muted);">Loading workouts...</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div id="pagination-bar" style="display:none; justify-content:center; padding-top:8px;">
-      <button type="button" id="btn-load-more" class="btn-secondary">Load More Workouts</button>
-    </div>
+  <div id="pagination-bar" style="display:none; justify-content:center; padding-top:8px; margin-bottom:24px;">
+    <button type="button" id="btn-load-more" class="btn-secondary">Load More Workouts</button>
   </div>
 
   <div class="toast-container" id="toastContainer"></div>
